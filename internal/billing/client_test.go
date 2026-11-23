@@ -167,6 +167,50 @@ func TestLegacyExplicitLifetimeCents(t *testing.T) {
 	}
 }
 
+func TestSub2APIKeyLifetimeActualCost(t *testing.T) {
+	var calls atomic.Int32
+	var body atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if (r.URL.Path != "/modelapi/v1/usage" && r.URL.Path != "/v1/usage") || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("unexpected Sub2API request %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+		fmt.Fprint(w, body.Load().(string))
+	}))
+	defer server.Close()
+	fetch := func(base string, start time.Time) (*Report, error) {
+		return testClient().Fetch(context.Background(), Credentials{Kind: "sub2api", BaseURL: base, APIKey: "secret"}, start, testNow)
+	}
+
+	// balance/remaining are the owner's shared wallet and cost is pre-multiplier:
+	// only usage.total.actual_cost is this key's charged spend.
+	body.Store(`{"mode":"unrestricted","isValid":true,"remaining":92068.27,"balance":92068.27,"unit":"USD","usage":{"today":{"actual_cost":1.29},"total":{"actual_cost":33.3777,"cost":40.1}}}`)
+	for _, base := range []string{server.URL + "/modelapi/v1", server.URL} {
+		report, err := fetch(base, time.Time{})
+		if err != nil {
+			t.Fatalf("%s: %v", base, err)
+		}
+		if report.Amount != 33.3777 || report.Currency != "USD" || report.Scope != "api_key" || !report.PeriodStart.IsZero() {
+			t.Fatalf("%s: unexpected report %+v", base, report)
+		}
+	}
+	if _, err := fetch(server.URL, testStart); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("historical range must be unsupported: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatal("unsupported historical range probed the network")
+	}
+
+	body.Store(`{"mode":"unrestricted","unit":"CNY","usage":{"total":{"actual_cost":5}}}`)
+	if report, err := fetch(server.URL, time.Time{}); !errors.Is(err, ErrUnsupported) || report != nil {
+		t.Fatalf("non-USD spend must be unsupported: %+v %v", report, err)
+	}
+	body.Store(`{"mode":"unrestricted","unit":"USD","balance":10}`)
+	if report, err := fetch(server.URL, time.Time{}); err == nil || errors.Is(err, ErrUnsupported) || report != nil {
+		t.Fatalf("missing usage totals must fail, never report zero spend: %+v %v", report, err)
+	}
+}
+
 func TestFailuresNeverReturnPartialOrSecrets(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

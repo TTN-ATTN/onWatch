@@ -897,7 +897,7 @@ func (s *Service) pollBills(ctx context.Context) {
 			continue
 		}
 		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		if resolved.BillingKind == "openai-compatible" {
+		if resolved.BillingKind == "openai-compatible" || resolved.BillingKind == "sub2api" {
 			start = time.Time{}
 		}
 		key := resolved.Credentials["api_key"]

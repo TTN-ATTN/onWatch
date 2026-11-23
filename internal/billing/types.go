@@ -13,11 +13,12 @@ import (
 var ErrUnsupported = errors.New("provider billing unsupported")
 
 // Credentials selects a read-only adapter. Kind is auto, openai, anthropic,
-// openrouter, openai-compatible, or none. APIKey must be an organization admin
-// key for OpenAI and Anthropic; their reports cover the organization, not this key.
-// BaseURL is the API root, including any gateway prefix and optional /v1.
+// openrouter, openai-compatible, sub2api, or none. APIKey must be an organization
+// admin key for OpenAI and Anthropic; their reports cover the organization, not
+// this key. BaseURL is the API root, including any gateway prefix and optional /v1.
 // Explicit openai-compatible opts into the legacy USD-cents, cumulative token
 // usage contract; it is not a general promise of OpenAI billing compatibility.
+// Explicit sub2api opts into the Sub2API gateway's per-key /v1/usage totals.
 type Credentials struct {
 	Provider string
 	BaseURL  string

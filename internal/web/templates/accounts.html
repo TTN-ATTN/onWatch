@@ -20,7 +20,7 @@
                     <label>Provider<select id="accounts-provider" required></select></label>
                     <label>Account name<input id="accounts-name" type="text" maxlength="200" required autocomplete="off"></label>
                     <label>Mode<select id="accounts-mode"><option value="quota">Quota dashboard</option><option value="cost">Costs &amp; usage</option></select></label>
-                    <label>Billing adapter<select id="accounts-billing"><option value="auto">Automatic</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="openai-compatible">OpenAI-compatible</option><option value="none">None (local estimate only)</option></select></label>
+                    <label>Billing adapter<select id="accounts-billing"><option value="auto">Automatic</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="openai-compatible">OpenAI-compatible</option><option value="sub2api">Sub2API gateway</option><option value="none">None (local estimate only)</option></select></label>
                     <label class="accounts-wide">Base URL (optional)<input id="accounts-base-url" type="url" placeholder="https://api.example.com" autocomplete="off" aria-describedby="accounts-url-note"></label>
                 </div>
                 <p class="accounts-muted" id="accounts-url-note">Provider billing requests use this URL when supported. Leave blank for the provider default.</p>

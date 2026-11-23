@@ -118,7 +118,7 @@ func Validate(provider, name string, settings Settings) error {
 		return fmt.Errorf("this provider supports cost tracking, not quota polling")
 	}
 	switch settings.BillingKind {
-	case "auto", "openai", "anthropic", "openrouter", "openai-compatible", "none":
+	case "auto", "openai", "anthropic", "openrouter", "openai-compatible", "sub2api", "none":
 	default:
 		return fmt.Errorf("unsupported billing adapter")
 	}

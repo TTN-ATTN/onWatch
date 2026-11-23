@@ -42,9 +42,9 @@ func NewClient(httpClient *http.Client) *Client {
 
 // Fetch performs GET requests only. Unsupported kinds never contact the server.
 // OpenRouter accepts lifetime (zero start) or the current UTC day/month through
-// now, not arbitrary historical ranges. Legacy openai-compatible accepts only
-// lifetime. Both report the actual observation end rather than a requested past
-// end. Organization reports use complete UTC-day query boundaries.
+// now, not arbitrary historical ranges. Legacy openai-compatible and sub2api
+// accept only lifetime. They report the actual observation end rather than a
+// requested past end. Organization reports use complete UTC-day query boundaries.
 func (c *Client) Fetch(ctx context.Context, credentials Credentials, start, end time.Time) (*Report, error) {
 	kind := strings.ToLower(strings.TrimSpace(credentials.Kind))
 	if kind == "" || kind == "auto" {
@@ -54,7 +54,7 @@ func (c *Client) Fetch(ctx context.Context, credentials Credentials, start, end 
 		}
 	}
 	switch kind {
-	case "openai", "anthropic", "openrouter", "openai-compatible":
+	case "openai", "anthropic", "openrouter", "openai-compatible", "sub2api":
 	default:
 		return nil, ErrUnsupported
 	}
@@ -80,6 +80,8 @@ func (c *Client) Fetch(ctx context.Context, credentials Credentials, start, end 
 		return c.openRouter(ctx, base, credentials.APIKey, start, end, now)
 	case "openai-compatible":
 		return c.legacy(ctx, base, credentials.APIKey, start, end, now)
+	case "sub2api":
+		return c.sub2api(ctx, base, credentials.APIKey, start, end, now)
 	default:
 		if start.IsZero() || start.Unix() < 0 {
 			return nil, fmt.Errorf("%w: organization billing requires a start date", ErrUnsupported)
@@ -124,6 +126,8 @@ func adapterURL(raw, kind string) (*url.URL, error) {
 		return u.JoinPath("organizations", "cost_report"), nil
 	case "openrouter":
 		return u.JoinPath("key"), nil
+	case "sub2api":
+		return u.JoinPath("usage"), nil
 	default:
 		return u.JoinPath("dashboard", "billing", "usage"), nil
 	}
@@ -390,4 +394,38 @@ func (c *Client) legacy(ctx context.Context, endpoint *url.URL, key string, star
 		return nil, errors.New("invalid legacy billing amount")
 	}
 	return &Report{Amount: *response.Total / 100, Currency: "USD", Scope: "api_key", PeriodEnd: now, ObservedAt: c.now().UTC()}, nil
+}
+
+// Sub2API gateway contract (GET /v1/usage, the CC Switch usage query):
+// https://github.com/Wei-Shaw/sub2api/blob/main/backend/internal/handler/gateway_handler.go
+// usage.total.actual_cost is this key's cumulative charged spend in USD, after
+// the gateway's rate multipliers. balance and remaining describe the owner's
+// shared wallet or the key quota, not spend, so they are never reported. The
+// gateway fills usage best-effort: a missing total is an error, never zero spend.
+func (c *Client) sub2api(ctx context.Context, endpoint *url.URL, key string, start, end, now time.Time) (*Report, error) {
+	if !start.IsZero() || !currentPeriod(start, end, now) {
+		return nil, fmt.Errorf("%w: Sub2API billing only exposes lifetime usage", ErrUnsupported)
+	}
+	var response struct {
+		Unit  *string `json:"unit"`
+		Usage *struct {
+			Total *struct {
+				ActualCost *float64 `json:"actual_cost"`
+			} `json:"total"`
+		} `json:"usage"`
+	}
+	if err := c.get(ctx, endpoint, key, "sub2api", &response); err != nil {
+		return nil, err
+	}
+	if response.Unit != nil && !strings.EqualFold(*response.Unit, "USD") {
+		return nil, fmt.Errorf("%w: Sub2API reports a non-USD currency", ErrUnsupported)
+	}
+	if response.Usage == nil || response.Usage.Total == nil || response.Usage.Total.ActualCost == nil {
+		return nil, errors.New("Sub2API usage totals are unavailable")
+	}
+	amount := *response.Usage.Total.ActualCost
+	if !validAmount(amount) {
+		return nil, errors.New("invalid Sub2API billing amount")
+	}
+	return &Report{Amount: amount, Currency: "USD", Scope: "api_key", PeriodEnd: now, ObservedAt: c.now().UTC()}, nil
 }
