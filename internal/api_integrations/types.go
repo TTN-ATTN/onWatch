@@ -38,6 +38,9 @@ type UsageEvent struct {
 	Provider         string
 	Account          string
 	AccountID        int64
+	// OMPProvider is the omp provider name that made the call. onWatch binds
+	// the event to the account it discovered from that omp entry.
+	OMPProvider      string
 	Model            string
 	RequestID        string
 	PromptTokens     int
@@ -71,6 +74,7 @@ type usageEventWire struct {
 	Provider         string          `json:"provider"`
 	Account          string          `json:"account"`
 	AccountID        int64           `json:"account_id"`
+	OMPProvider      string          `json:"omp_provider"`
 	Model            string          `json:"model"`
 	RequestID        string          `json:"request_id"`
 	PromptTokens     int             `json:"prompt_tokens"`
@@ -160,6 +164,10 @@ func ParseUsageEventLine(line []byte, sourcePath string) (*UsageEvent, error) {
 	if len(account) > maxIntegrationFieldLen {
 		return nil, fmt.Errorf("account exceeds %d characters", maxIntegrationFieldLen)
 	}
+	ompProvider := strings.TrimSpace(wire.OMPProvider)
+	if len(ompProvider) > maxIntegrationFieldLen || strings.ContainsAny(ompProvider, "\x00\r\n") {
+		return nil, fmt.Errorf("omp_provider must be a single line of at most %d characters", maxIntegrationFieldLen)
+	}
 
 	metadataJSON := ""
 	if len(wire.Metadata) > 0 && string(wire.Metadata) != "null" {
@@ -183,6 +191,7 @@ func ParseUsageEventLine(line []byte, sourcePath string) (*UsageEvent, error) {
 		Provider:         provider,
 		Account:          account,
 		AccountID:        wire.AccountID,
+		OMPProvider:      ompProvider,
 		Model:            model,
 		RequestID:        strings.TrimSpace(wire.RequestID),
 		PromptTokens:     wire.PromptTokens,

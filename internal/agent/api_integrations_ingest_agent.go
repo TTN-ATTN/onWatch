@@ -36,6 +36,7 @@ type APIIntegrationsIngestAgent struct {
 	scanPathCursor int
 	logger         *slog.Logger
 	pricing        *pricing.Catalog
+	resolveOMP     func(ompProvider string) (accountID int64, provider string, ok bool)
 }
 
 // NewAPIIntegrationsIngestAgent creates a new API integrations file ingester.
@@ -63,6 +64,12 @@ func (a *APIIntegrationsIngestAgent) SetInterval(interval time.Duration) {
 // SetPricingCatalog supplies the native pricing snapshot before Run starts.
 func (a *APIIntegrationsIngestAgent) SetPricingCatalog(catalog *pricing.Catalog) {
 	a.pricing = catalog
+}
+
+// SetOMPAccountResolver binds events that name an omp provider to the account
+// onWatch discovered from it, before pricing uses the account's provider.
+func (a *APIIntegrationsIngestAgent) SetOMPAccountResolver(resolve func(ompProvider string) (int64, string, bool)) {
+	a.resolveOMP = resolve
 }
 
 // Run starts the periodic ingestion loop until context cancellation.
@@ -216,6 +223,11 @@ func (a *APIIntegrationsIngestAgent) scanFile(path string) error {
 				invalidAlertsSuppressed++
 			}
 			continue
+		}
+		if event.OMPProvider != "" && event.AccountID == 0 && a.resolveOMP != nil {
+			if accountID, provider, ok := a.resolveOMP(event.OMPProvider); ok {
+				event.AccountID, event.Provider = accountID, provider
+			}
 		}
 		if event.CostUSD == nil && a.pricing != nil {
 			if cost, err := a.pricing.Estimate(event.Provider, event.Model, pricing.Usage{

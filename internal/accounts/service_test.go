@@ -171,6 +171,28 @@ func TestServiceRejectsCredentialAlreadyTrackedByAnotherAccount(t *testing.T) {
 	}
 }
 
+// One omp provider can hold several logins; a reported call names only the
+// provider, so binding it to either login would misattribute its cost.
+func TestServiceResolveOMPProviderRefusesAmbiguousSources(t *testing.T) {
+	s, st := newAccountServiceFixture(t, false, "")
+	add := func(name, alias, external string) int64 {
+		id, err := st.SaveManagedProviderAccount(0, "anthropic", name, `{"managed":true,"source":"omp","source_provider":"`+alias+`","mode":"cost"}`, external)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	single := add("omp / solo", "solo", "omp:x:anthropic:solo")
+	if id, provider, ok := s.ResolveOMPProvider("solo"); !ok || id != single || provider != "anthropic" {
+		t.Fatalf("unique omp provider not resolved: %d %q %v", id, provider, ok)
+	}
+	add("omp / anthropic (a)", "anthropic", "omp:x:anthropic:auth:1")
+	add("omp / anthropic (b)", "anthropic", "omp:x:anthropic:auth:2")
+	if id, _, ok := s.ResolveOMPProvider("anthropic"); ok {
+		t.Fatalf("ambiguous omp provider bound to account %d", id)
+	}
+}
+
 func TestServiceRenameRetainsHistoryAndAccountIDLinkage(t *testing.T) {
 	s, st := newAccountServiceFixture(t, false, "")
 	at := time.Now().UTC().Add(-time.Hour)

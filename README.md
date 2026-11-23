@@ -123,7 +123,7 @@ The **Accounts & Costs** page (`/accounts`, card icon in the header) manages any
 - Credentials are encrypted in the database and never shown again after saving. A key already tracked by one account cannot be added to another, so it is never polled twice.
 - **Pay-as-you-go spend** comes from the provider's own billing API where one exists: OpenAI and Anthropic organization costs (needs an admin key), OpenRouter key usage, and OpenAI-compatible gateways with the legacy billing endpoint. Spend is shown with the provider's own scope (organization or key) and period.
 - **Otherwise onWatch estimates the cost** from calls recorded through [API Integrations](docs/API_INTEGRATIONS_SETUP.md), using its built-in prices for common OpenAI, Anthropic, Gemini, Z.ai and DeepSeek models. Unknown models stay "Unknown", never $0. Add or override prices with `ONWATCH_PRICING_FILE`.
-- **omp users:** if the omp coding agent is installed, its API keys and logins are offered as read-only accounts automatically. onWatch never needs omp; set `ONWATCH_OMP_ENABLED=false` to skip this.
+- **omp users:** if the omp coding agent is installed, its API keys and logins are offered as read-only accounts automatically, and the [omp extension](docs/API_INTEGRATIONS_SETUP.md#omp) reports every model call omp makes, so those accounts show real per-model token use and cost. onWatch never needs omp; set `ONWATCH_OMP_ENABLED=false` to skip discovery.
 
 ---
 

@@ -85,6 +85,7 @@ Optional fields:
 - `latency_ms`
 - `account` - account name (used when `account_id` is omitted)
 - `account_id` - stable account ID from **Accounts & Costs**; survives renames
+- `omp_provider` - omp provider name that made the call; binds the event to the account onWatch discovered from that omp entry (written by the [omp extension](#omp))
 - `request_id`
 - `metadata`
 
@@ -112,7 +113,7 @@ Full example:
 Notes:
 
 - `ts` must be RFC3339 in UTC, for example `2026-04-03T12:00:00Z`
-- `provider` must be one of the supported v1 provider names
+- `provider` must be a lowercase slug: a letter, then letters, digits, `.`, `_` or `-`
 - `metadata` must be a JSON object if present
 - If `account` is omitted, onWatch stores it as `default`
 - If `total_tokens` is omitted, onWatch computes `prompt_tokens + completion_tokens`
@@ -157,6 +158,23 @@ Included example utilities currently include:
 - `examples/api_integrations/python/generate_practice_dataset.py`
 
 You can also build your own wrapper around the helper and write any number of integration-specific JSONL files, as long as they end in `.jsonl`.
+
+## omp
+
+[`examples/api_integrations/omp/onwatch.ts`](../examples/api_integrations/omp/onwatch.ts) is an omp extension that reports every model call omp makes: main-agent replies, subagent replies, and side calls such as titles and compaction. Install it once:
+
+```bash
+mkdir -p ~/.omp/agent/extensions
+cp examples/api_integrations/omp/onwatch.ts ~/.omp/agent/extensions/onwatch.ts
+```
+
+New omp sessions then append one event per call to `omp-YYYY-MM.jsonl` in the API Integrations directory. Each event carries `omp_provider`, so onWatch attaches it to the matching `omp / <provider>` account on **Accounts & Costs** and prices it with its own rates (omp's cost figures are not used).
+
+- Only the provider, model, token counts, and timing are written: no prompts, replies, or keys.
+- Calls that failed and used no tokens are skipped, and replays are dropped by `request_id`.
+- An omp provider holding several logins (for example two Anthropic subscriptions) cannot tell onWatch which login made a call, so those calls stay unattached and appear only on the API Integrations tab.
+- Models onWatch has no price for show as **Unknown**; add them with `ONWATCH_PRICING_FILE`.
+- Set `ONWATCH_OMP_USAGE=false` in omp's environment to pause reporting without removing the extension.
 
 ## Dashboard and API
 

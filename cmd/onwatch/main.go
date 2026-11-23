@@ -1620,6 +1620,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize account management: %w", err)
 	}
+	if apiIntegrationsAg != nil {
+		apiIntegrationsAg.SetOMPAccountResolver(accountsSvc.ResolveOMPProvider)
+	}
 
 	// Create notification engine
 	notifier := notify.New(db, logger)

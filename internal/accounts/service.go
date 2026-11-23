@@ -424,6 +424,32 @@ func hasCredential(values map[string]string) bool {
 	return false
 }
 
+// ResolveOMPProvider maps the omp provider name on a reported call to the one
+// active account discovered from it. Ambiguous names (one omp provider holding
+// several logins) stay unbound rather than guessing which login was used.
+func (s *Service) ResolveOMPProvider(ompProvider string) (int64, string, bool) {
+	rows, err := s.store.QueryAllProviderAccounts()
+	if err != nil {
+		return 0, "", false
+	}
+	var id int64
+	var provider string
+	for _, row := range rows {
+		if row.DeletedAt != nil {
+			continue
+		}
+		settings, err := ParseSettings(row.Metadata)
+		if err != nil || settings.Source != "omp" || settings.SourceProvider != ompProvider {
+			continue
+		}
+		if id != 0 {
+			return 0, "", false
+		}
+		id, provider = row.ID, row.Provider
+	}
+	return id, provider, id != 0
+}
+
 func (s *Service) List() ([]Account, error) {
 	rows, err := s.store.QueryAllProviderAccounts()
 	if err != nil {
