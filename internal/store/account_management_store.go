@@ -221,3 +221,19 @@ func (s *Store) ReplaceProviderAccountMetadata(updates map[int64]string) error {
 	}
 	return tx.Commit()
 }
+
+// ClearAccountBill forgets a fetched bill and its throttle, used when billing
+// settings or credentials change so a stale report is never shown as current.
+func (s *Store) ClearAccountBill(accountID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{`DELETE FROM account_billing_reports WHERE account_id = ?`, `DELETE FROM account_billing_status WHERE account_id = ?`} {
+		if _, err := tx.Exec(statement, accountID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

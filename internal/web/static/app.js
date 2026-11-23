@@ -3990,8 +3990,8 @@ function updateCard(quotaType, data, suffix) {
   if (detailsEl && data.usageDetails && data.usageDetails.length > 0) {
     detailsEl.innerHTML = data.usageDetails.map(d =>
       `<div class="usage-detail-row">
-        <span class="usage-detail-model">${d.modelCode || d.ModelCode}</span>
-        <span class="usage-detail-count">${formatNumber(d.usage || d.Usage)}</span>
+        <span class="usage-detail-model">${escapeHTML(d.modelCode || d.ModelCode || '')}</span>
+        <span class="usage-detail-count">${formatNumber(d.usage ?? d.Usage ?? 0)}</span>
       </div>`
     ).join('');
     detailsEl.style.display = '';

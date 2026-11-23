@@ -171,7 +171,7 @@ func (s *Service) Usage(id int64, duration time.Duration) (*Usage, error) {
 		}
 	}
 	if !checked.IsZero() && billingMessage != "" {
-		usage.Message = billingMessage
+		usage.Message = sentence(billingMessage)
 	}
 	if requests == 0 && report == nil {
 		usage.Message = strings.TrimSpace(usage.Message + " No observed calls are available. Record API response usage in the API Integrations JSONL feed; an API key alone cannot reconstruct token usage.")
@@ -180,7 +180,16 @@ func (s *Service) Usage(id int64, duration time.Duration) (*Usage, error) {
 	quotaError := s.quotaErrors[id]
 	s.mu.RUnlock()
 	if quotaError != "" {
-		usage.Message = strings.TrimSpace(usage.Message + " " + quotaError)
+		usage.Message = strings.TrimSpace(usage.Message + " " + sentence(quotaError))
 	}
 	return usage, nil
+}
+
+// sentence terminates a status fragment so joined messages stay readable.
+func sentence(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" || strings.HasSuffix(message, ".") || strings.HasSuffix(message, "!") || strings.HasSuffix(message, "?") {
+		return message
+	}
+	return message + "."
 }

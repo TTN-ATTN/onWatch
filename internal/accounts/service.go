@@ -489,6 +489,7 @@ func (s *Service) Save(input Input) (int64, error) {
 			}
 		}
 	}
+	before := settings
 	if settings.Credentials == nil {
 		settings.Credentials = map[string]string{}
 	}
@@ -528,6 +529,15 @@ func (s *Service) Save(input Input) (int64, error) {
 	}
 	if settings.Managed && settings.Source != "omp" && !hasCredential(settings.Credentials) {
 		return 0, fmt.Errorf("credentials are required")
+	}
+	if changedCredential {
+		owner, err := s.credentialOwner(input.Provider, settings.Credentials, input.ID)
+		if err != nil {
+			return 0, err
+		}
+		if owner != "" {
+			return 0, fmt.Errorf("this credential is already tracked by account %q; edit or resume that account instead", owner)
+		}
 	}
 	if input.Provider == "muse" && settings.Mode == "quota" && settings.IsEnabled() && input.Enabled == nil {
 		return 0, fmt.Errorf("Muse quota polling spends one prompt per poll; explicitly enable it to opt in")
@@ -580,8 +590,47 @@ func (s *Service) Save(input Input) (int64, error) {
 	if err := s.store.BindAPIIntegrationAccount(input.Provider, input.Name, id); err != nil {
 		return 0, err
 	}
+	if row != nil && (changedCredential || before.BillingKind != settings.BillingKind || before.BaseURL != settings.BaseURL || before.Mode != settings.Mode) {
+		if err := s.store.ClearAccountBill(id); err != nil {
+			return 0, err
+		}
+	}
 	s.Signal()
 	return id, nil
+}
+
+// credentialOwner names another active account of the same provider holding
+// any of these secrets. One key maps to one account, so it is never polled
+// twice against the same provider rate limit or double-counted in costs.
+func (s *Service) credentialOwner(provider string, credentials map[string]string, exclude int64) (string, error) {
+	wanted := make(map[[32]byte]bool)
+	for field, value := range credentials {
+		if value != "" && secretField(provider, field) {
+			wanted[secretDigest(provider, value)] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return "", nil
+	}
+	rows, err := s.store.QueryAllProviderAccounts()
+	if err != nil {
+		return "", err
+	}
+	for _, row := range rows {
+		if row.ID == exclude || row.DeletedAt != nil || row.Provider != provider {
+			continue
+		}
+		resolved, err := s.Resolve(row)
+		if err != nil {
+			continue // An unavailable source holds no live credential.
+		}
+		for field, value := range resolved.Credentials {
+			if value != "" && secretField(provider, field) && wanted[secretDigest(provider, value)] {
+				return row.Name, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 func (s *Service) Delete(id int64) error {

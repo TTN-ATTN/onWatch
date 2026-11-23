@@ -149,6 +149,28 @@ func TestServiceManualAccountsEncryptPreserveAndIsolateCredentials(t *testing.T)
 	}
 }
 
+// A key added by hand that an existing account (manual or discovered) already
+// tracks would be polled twice against one rate limit and double-counted.
+func TestServiceRejectsCredentialAlreadyTrackedByAnotherAccount(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "models.yml"), []byte("providers:\n  zai:\n    baseUrl: https://api.z.ai/api/coding/paas/v4\n    apiKey: fixture-discovered-zai\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := newAccountServiceFixture(t, true, dir)
+	_, err := s.Save(Input{Provider: "zai", Name: "manual copy", Mode: "quota", Credentials: map[string]string{"api_key": "fixture-discovered-zai"}})
+	if err == nil || !strings.Contains(err.Error(), "omp / zai") {
+		t.Fatalf("duplicate of a discovered key was accepted: %v", err)
+	}
+	id := saveManualAccount(t, s, "personal", "fixture-unique-openai")
+	if _, err := s.Save(Input{Provider: "openai", Name: "second copy", Mode: "cost", BillingKind: "none", Credentials: map[string]string{"api_key": "fixture-unique-openai"}}); err == nil {
+		t.Fatal("duplicate of a manual key was accepted")
+	}
+	// Re-entering an account's own key while editing it is not a duplicate.
+	if _, err := s.Save(Input{ID: id, Provider: "openai", Name: "personal", Mode: "cost", BillingKind: "none", Credentials: map[string]string{"api_key": "fixture-unique-openai"}}); err != nil {
+		t.Fatalf("editing an account with its own key failed: %v", err)
+	}
+}
+
 func TestServiceRenameRetainsHistoryAndAccountIDLinkage(t *testing.T) {
 	s, st := newAccountServiceFixture(t, false, "")
 	at := time.Now().UTC().Add(-time.Hour)
