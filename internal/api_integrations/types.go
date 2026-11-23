@@ -33,11 +33,11 @@ func validProvider(provider string) bool {
 
 // UsageEvent is the normalized API integration telemetry event stored by onWatch.
 type UsageEvent struct {
-	Timestamp        time.Time
-	Integration      string
-	Provider         string
-	Account          string
-	AccountID        int64
+	Timestamp   time.Time
+	Integration string
+	Provider    string
+	Account     string
+	AccountID   int64
 	// OMPProvider is the omp provider name that made the call. onWatch binds
 	// the event to the account it discovered from that omp entry.
 	OMPProvider      string
