@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/onllm-dev/onwatch/v2/internal/accounts"
 	"github.com/onllm-dev/onwatch/v2/internal/agent"
 	"github.com/onllm-dev/onwatch/v2/internal/api"
 	"github.com/onllm-dev/onwatch/v2/internal/config"
@@ -135,6 +136,8 @@ type Handler struct {
 	dashboardTmpl      *template.Template
 	loginTmpl          *template.Template
 	settingsTmpl       *template.Template
+	accountsTmpl       *template.Template
+	accounts           *accounts.Service
 	sessions           *SessionStore
 	config             *config.Config
 	metrics            *metrics.Metrics
@@ -851,6 +854,12 @@ func NewHandler(store *store.Store, tracker *tracker.Tracker, logger *slog.Logge
 		settingsTmpl = template.New("empty")
 	}
 
+	accountsTmpl, err := template.New("").Funcs(recoveryTemplateFuncs).Funcs(peakHoursTemplateFuncs).ParseFS(templatesFS, "templates/layout.html", "templates/accounts.html")
+	if err != nil {
+		logger.Error("failed to parse accounts template", "error", err)
+		accountsTmpl = template.New("empty")
+	}
+
 	h := &Handler{
 		responses:     newResponseCache(),
 		store:         store,
@@ -859,6 +868,7 @@ func NewHandler(store *store.Store, tracker *tracker.Tracker, logger *slog.Logge
 		dashboardTmpl: dashboardTmpl,
 		loginTmpl:     loginTmpl,
 		settingsTmpl:  settingsTmpl,
+		accountsTmpl:  accountsTmpl,
 		sessions:      sessions,
 		config:        cfg,
 		metrics:       metrics.New(),
@@ -1164,7 +1174,7 @@ func (h *Handler) getProviderFromRequest(r *http.Request) (string, error) {
 		return "", fmt.Errorf("configuration not available")
 	}
 
-	providers := h.config.AvailableProviders()
+	providers := h.availableAccountProviders()
 	if len(providers) == 0 {
 		return "", fmt.Errorf("no providers configured")
 	}
@@ -1180,14 +1190,14 @@ func (h *Handler) getProviderFromRequest(r *http.Request) (string, error) {
 
 	// "both" is a virtual provider - allowed when multiple are configured
 	if provider == "both" {
-		if h.config.HasMultipleProviders() {
+		if len(providers) > 1 {
 			return "both", nil
 		}
 		return "", fmt.Errorf("'both' requires multiple providers to be configured")
 	}
 
 	// Validate provider is available
-	if !h.config.HasProvider(provider) {
+	if !containsProvider(providers, provider) {
 		return "", fmt.Errorf("provider '%s' is not configured", provider)
 	}
 
@@ -1335,6 +1345,9 @@ func (h *Handler) providerVisibilityMap() map[string]map[string]bool {
 // 2s Antigravity probe, the MiniMax store query) runs outside the lock, so a
 // slow probe never blocks a settings save.
 func (h *Handler) isProviderConfigured(provider string) bool {
+	if h.accounts != nil && containsProvider(h.accounts.QuotaProviders(), provider) {
+		return true
+	}
 	if h.config == nil {
 		return false
 	}
@@ -2549,10 +2562,10 @@ func (h *Handler) Providers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	providers := h.config.AvailableProviders()
+	providers := h.availableAccountProviders()
 	providers = h.filterDashboardProviders(providers)
 
-	if h.config.HasMultipleProviders() {
+	if len(providers) > 1 {
 		providers = append(providers, "both")
 	}
 	providers = orderDashboardProviders(providers, h.loadDashboardProvidersOrder())
@@ -2636,6 +2649,11 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	_ = hasOpenRouter // used by template if needed
 	_ = hasMoonshot
 	_ = hasDeepSeek
+	accountOptions, selectedAccount, accountErr := h.dashboardAccountOptions(currentProvider, r.URL.Query().Get("account"))
+	if accountErr != nil {
+		respondError(w, http.StatusBadRequest, accountErr.Error())
+		return
+	}
 	data := map[string]interface{}{
 		"Title":           "Dashboard",
 		"Providers":       providers,
@@ -2654,6 +2672,8 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"ToolsVisible":    toolsVisible,
 		"PollIntervalSec": h.getPollIntervalSec(),
 		"BasePath":        h.getBasePath(),
+		"AccountOptions":  accountOptions,
+		"SelectedAccount": selectedAccount,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -8771,8 +8791,23 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to process new password")
 		return
 	}
+	// Account credentials are rekeyed before the password commits and rolled
+	// back if it fails, so they are never left encrypted with an unused key.
+	oldKey, newKey := DeriveEncryptionKey(oldHash, nil), DeriveEncryptionKey(newHash, nil)
+	if h.accounts != nil {
+		if err := h.accounts.RotateEncryptionKey(oldKey, newKey); err != nil {
+			h.logger.Error("failed to re-encrypt account credentials", "error", err)
+			respondError(w, http.StatusInternalServerError, "failed to re-encrypt account credentials")
+			return
+		}
+	}
 	if err := h.store.UpsertUser(h.sessions.username, newHash); err != nil {
 		h.logger.Error("failed to update password in database", "error", err)
+		if h.accounts != nil {
+			if rollbackErr := h.accounts.RotateEncryptionKey(newKey, oldKey); rollbackErr != nil {
+				h.logger.Error("failed to restore account credential encryption", "error", rollbackErr)
+			}
+		}
 		respondError(w, http.StatusInternalServerError, "failed to save new password")
 		return
 	}

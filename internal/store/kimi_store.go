@@ -27,7 +27,7 @@ func (s *Store) InsertKimiSnapshot(snapshot *api.KimiSnapshot) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	accountID := snapshot.AccountID
+	accountID := s.accountIDOr(snapshot.AccountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}
@@ -77,6 +77,7 @@ func (s *Store) InsertKimiSnapshot(snapshot *api.KimiSnapshot) (int64, error) {
 
 // QueryLatestKimi returns the most recent Kimi snapshot with quotas.
 func (s *Store) QueryLatestKimi(accountID int64) (*api.KimiSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}
@@ -144,6 +145,7 @@ func (s *Store) QueryLatestKimi(accountID int64) (*api.KimiSnapshot, error) {
 
 // QueryKimiRange returns kimi snapshots in [start, end] for charts.
 func (s *Store) QueryKimiRange(accountID int64, start, end time.Time, limit ...int) ([]*api.KimiSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}
@@ -179,6 +181,7 @@ func (s *Store) QueryKimiRange(accountID int64, start, end time.Time, limit ...i
 // QueryKimiRangeSampled returns at most about 200 snapshots spread evenly
 // across the range (first and last always kept), with their quota values.
 func (s *Store) QueryKimiRangeSampled(accountID int64, start, end time.Time) ([]*api.KimiSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}
@@ -264,7 +267,7 @@ type KimiResetCycle struct {
 
 // InsertKimiResetCycle creates a new cycle row.
 func (s *Store) InsertKimiResetCycle(cycle *KimiResetCycle) (int64, error) {
-	acc := cycle.AccountID
+	acc := s.accountIDOr(cycle.AccountID)
 	if acc == 0 {
 		acc = DefaultKimiAccountID
 	}
@@ -289,6 +292,7 @@ func (s *Store) InsertKimiResetCycle(cycle *KimiResetCycle) (int64, error) {
 
 // QueryActiveKimiResetCycle returns the open cycle for a quota if present.
 func (s *Store) QueryActiveKimiResetCycle(accountID int64, quotaName string) (*KimiResetCycle, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}
@@ -321,8 +325,8 @@ func (s *Store) QueryActiveKimiResetCycle(accountID int64, quotaName string) (*K
 // UpdateKimiResetCycleEnd closes a cycle.
 func (s *Store) UpdateKimiResetCycleEnd(id int64, end time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
-		`UPDATE kimi_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ? WHERE id = ?`,
-		end.Format(time.RFC3339Nano), peak, delta, id,
+		`UPDATE kimi_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ? WHERE id = ? AND (? = 0 OR account_id = ?)`,
+		end.Format(time.RFC3339Nano), peak, delta, id, s.accountID, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close kimi reset cycle: %w", err)
@@ -332,6 +336,7 @@ func (s *Store) UpdateKimiResetCycleEnd(id int64, end time.Time, peak, delta flo
 
 // QueryKimiCyclesForQuota returns recent cycles for summary stats.
 func (s *Store) QueryKimiCyclesForQuota(accountID int64, quotaName string, limit int) ([]*KimiResetCycle, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultKimiAccountID
 	}

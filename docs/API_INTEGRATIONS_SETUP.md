@@ -10,15 +10,16 @@ Ingest local JSONL files to monitor Custom API Integrations usage in onWatch. Th
 - A script or automation that already calls a supported provider API
 - Ability to write a JSONL file locally
 
-Supported v1 providers:
+Any lowercase provider slug is accepted (`a-z`, then `a-z0-9._-`), for example:
 
 - `anthropic`
 - `openai`
-- `mistral`
+- `zai`
+- `deepseek`
 - `openrouter`
 - `gemini`
 
-*This list is just getting started... feel free to add more providers as you need them!*
+Use the same slug as the account's provider in **Accounts & Costs** so events attach to that account.
 
 ## How It Works
 
@@ -78,9 +79,12 @@ Required fields:
 Optional fields:
 
 - `total_tokens`
+- `cache_read_tokens` - cached prompt tokens, a subset of `prompt_tokens`
+- `cache_write_tokens` - prompt tokens written to the cache, a disjoint subset of `prompt_tokens`
 - `cost_usd`
 - `latency_ms`
-- `account`
+- `account` - account name (used when `account_id` is omitted)
+- `account_id` - stable account ID from **Accounts & Costs**; survives renames
 - `request_id`
 - `metadata`
 
@@ -112,6 +116,26 @@ Notes:
 - `metadata` must be a JSON object if present
 - If `account` is omitted, onWatch stores it as `default`
 - If `total_tokens` is omitted, onWatch computes `prompt_tokens + completion_tokens`
+- If `account_id` is set it must belong to an active account with the same `provider`; otherwise the event is bound by exact `provider` + `account` name, and pre-existing events are bound when that account is created or renamed
+- `cache_read_tokens` + `cache_write_tokens` must not exceed `prompt_tokens`
+
+## Cost Without `cost_usd`
+
+When an event has no `cost_usd`, onWatch estimates it with its own built-in pricing snapshot. No omp installation, statistics database, or network access is involved. Estimates:
+
+- match the exact `provider` + `model` only (no prefix guessing); an unknown model stays **unknown**, never `$0`
+- charge cache reads/writes at the model's cache rates, and never charge cached tokens twice
+- exclude tools, storage, taxes, batch/priority tiers, and negotiated discounts
+
+Add or override rates with `ONWATCH_PRICING_FILE`, a JSON array (max 1 MiB) of exact rates in USD per million tokens:
+
+```json
+[
+  {"provider": "zai", "model": "glm-4.6", "input_per_million": 0.6, "output_per_million": 2.2, "cache_read_per_million": 0.11}
+]
+```
+
+Omitted cache rates charge the full input rate. An invalid file stops startup rather than silently pricing calls wrongly.
 
 ## Python Examples
 
@@ -144,6 +168,8 @@ The dashboard shows:
 - all-time and recent usage insight panels
 - a shared usage chart with metric modes for tokens per call, API calls, accumulated tokens, and cost
 - ingest health, tailed files, and recent alerts
+
+Per-account cost analysis lives at **Accounts & Costs** (`/accounts`): daily and per-model cost, token, and cache breakdowns for one account. When the provider exposes a billing API, its reported spend is shown with the provider's own scope (organization or API key) and period. Observed-call tables are kept separate because they may not reconcile with an organization-wide bill.
 
 API Integrations can also be queried through the read-only backend API:
 

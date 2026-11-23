@@ -34,7 +34,7 @@ func TestParseUsageEventLine_Success(t *testing.T) {
 }
 
 func TestParseUsageEventLine_RejectsInvalidProvider(t *testing.T) {
-	line := []byte(`{"ts":"2026-04-03T12:00:00Z","integration":"notes","provider":"copilot","model":"x","prompt_tokens":1,"completion_tokens":1}`)
+	line := []byte(`{"ts":"2026-04-03T12:00:00Z","integration":"notes","provider":"invalid/provider","model":"x","prompt_tokens":1,"completion_tokens":1}`)
 	if _, err := ParseUsageEventLine(line, "/tmp/test.jsonl"); err == nil {
 		t.Fatal("expected error")
 	}

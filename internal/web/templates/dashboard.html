@@ -42,6 +42,13 @@
             </button>
             <ul class="codex-profile-menu" id="alibaba-profile-menu" role="listbox" aria-label="Select Alibaba account"></ul>
         </div>
+        {{if .AccountOptions}}
+        <label class="codex-profile-trigger">Account
+            <select id="provider-account-select" class="codex-profile-trigger" aria-label="Provider account">
+                {{range .AccountOptions}}<option value="{{.ID}}" {{if eq .ID $.SelectedAccount}}selected{{end}}>{{.Name}}</option>{{end}}
+            </select>
+        </label>
+        {{end}}
         <div class="header-actions">
             <button class="header-btn" id="refresh-btn" aria-label="Refresh data" title="Refresh now">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
@@ -77,6 +84,9 @@
         </div>
 
         <div class="header-controls">
+            <a href="{{.BasePath}}/accounts" class="header-btn" id="accounts-btn" aria-label="Accounts and costs" title="Accounts and costs">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+            </a>
             <a href="{{.BasePath}}/settings" class="header-btn" id="settings-btn" aria-label="Settings" title="Settings">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"/>

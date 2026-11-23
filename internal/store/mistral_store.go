@@ -3,13 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/onllm-dev/onwatch/v2/internal/api"
 )
 
 // The Mistral tables are declared with every other provider's in store.go.
-const mistralActiveIdentity = `(SELECT value FROM settings WHERE key='mistral_identity')`
+const mistralActiveIdentity = `(SELECT value FROM settings WHERE key=?)`
 
 // Hot-path reads. LatestMistral runs on every dashboard refresh, menubar
 // refresh and metrics scrape, so each statement is ordered to let SQLite walk
@@ -18,11 +19,11 @@ const mistralActiveIdentity = `(SELECT value FROM settings WHERE key='mistral_id
 // then id matches it; ordering by id alone forced a sort of every snapshot the
 // identity had - about 28ms a call at 90 days, growing with retention.
 const (
-	mistralLatestSnapshotSQL = `SELECT id,identity,captured_at,status FROM mistral_snapshots WHERE identity=` + mistralActiveIdentity + ` ORDER BY captured_at DESC, id DESC LIMIT 1`
+	mistralLatestSnapshotSQL = `SELECT id,identity,captured_at,status FROM mistral_snapshots WHERE account_id=? AND identity=` + mistralActiveIdentity + ` ORDER BY captured_at DESC, id DESC LIMIT 1`
 	// Driven from the billing table, which only has rows when pay-as-you-go
 	// data exists, instead of from every snapshot of the identity.
-	mistralLatestBillingSQL = `SELECT b.amount,b.currency,b.period_start,b.period_end,b.captured_at,b.status FROM mistral_billing b WHERE (SELECT identity FROM mistral_snapshots WHERE id=b.snapshot_id)=? ORDER BY b.snapshot_id DESC LIMIT 1`
-	mistralHistoryWindowSQL = `SELECT id,identity,captured_at,status FROM mistral_snapshots WHERE identity=` + mistralActiveIdentity + ` AND captured_at BETWEEN ? AND ? ORDER BY captured_at DESC, id DESC LIMIT ?`
+	mistralLatestBillingSQL = `SELECT b.amount,b.currency,b.period_start,b.period_end,b.captured_at,b.status FROM mistral_billing b WHERE (SELECT identity FROM mistral_snapshots WHERE id=b.snapshot_id AND account_id=?)=? ORDER BY b.snapshot_id DESC LIMIT 1`
+	mistralHistoryWindowSQL = `SELECT id,identity,captured_at,status FROM mistral_snapshots WHERE account_id=? AND identity=` + mistralActiveIdentity + ` AND captured_at BETWEEN ? AND ? ORDER BY captured_at DESC, id DESC LIMIT ?`
 )
 
 // mistralQuotaFromRow rebuilds a quota from its typed columns. NULL amounts mean
@@ -57,7 +58,7 @@ func (s *Store) SaveMistral(ctx context.Context, snap *api.MistralSnapshot) erro
 		return e
 	}
 	defer tx.Rollback()
-	result, e := tx.ExecContext(ctx, `INSERT INTO mistral_snapshots(identity,captured_at,status) VALUES(?,?,?)`, snap.Identity, snap.CapturedAt.Format(time.RFC3339Nano), snap.Status)
+	result, e := tx.ExecContext(ctx, `INSERT INTO mistral_snapshots(account_id,identity,captured_at,status) VALUES(?,?,?,?)`, s.accountID, snap.Identity, snap.CapturedAt.Format(time.RFC3339Nano), snap.Status)
 	if e != nil {
 		return e
 	}
@@ -83,7 +84,7 @@ func (s *Store) SaveMistral(ctx context.Context, snap *api.MistralSnapshot) erro
 			return e
 		}
 	}
-	if _, e = tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES('mistral_identity',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, snap.Identity); e != nil {
+	if _, e = tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, s.mistralIdentityKey(), snap.Identity); e != nil {
 		return e
 	}
 	if e = tx.Commit(); e == nil {
@@ -94,7 +95,7 @@ func (s *Store) SaveMistral(ctx context.Context, snap *api.MistralSnapshot) erro
 func (s *Store) LatestMistral(ctx context.Context) (*api.MistralSnapshot, error) {
 	snap := &api.MistralSnapshot{Quotas: []api.MistralQuota{}}
 	var captured string
-	e := s.db.QueryRowContext(ctx, mistralLatestSnapshotSQL).Scan(&snap.ID, &snap.Identity, &captured, &snap.Status)
+	e := s.db.QueryRowContext(ctx, mistralLatestSnapshotSQL, s.accountID, s.mistralIdentityKey()).Scan(&snap.ID, &snap.Identity, &captured, &snap.Status)
 	if e == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -105,7 +106,7 @@ func (s *Store) LatestMistral(ctx context.Context) (*api.MistralSnapshot, error)
 	// Each quota comes from the newest snapshot that carried it, which may not
 	// be the newest snapshot overall, so capturedAt is taken per quota rather
 	// than inherited from the parent - the dashboard's staleness check needs it.
-	rows, e := s.db.QueryContext(ctx, `SELECT q.quota_name,q.used,q.limit_value,q.utilization,q.currency,q.resets_at,qs.captured_at FROM (SELECT 'api_included' AS name UNION ALL SELECT 'vibe_included') keys JOIN mistral_quota_values q ON q.quota_name=keys.name AND q.snapshot_id=(SELECT MAX(q2.snapshot_id) FROM mistral_quota_values q2 JOIN mistral_snapshots s ON s.id=q2.snapshot_id WHERE s.identity=? AND q2.quota_name=keys.name) JOIN mistral_snapshots qs ON qs.id=q.snapshot_id ORDER BY q.quota_name`, snap.Identity)
+	rows, e := s.db.QueryContext(ctx, `SELECT q.quota_name,q.used,q.limit_value,q.utilization,q.currency,q.resets_at,qs.captured_at FROM (SELECT 'api_included' AS name UNION ALL SELECT 'vibe_included') keys JOIN mistral_quota_values q ON q.quota_name=keys.name AND q.snapshot_id=(SELECT MAX(q2.snapshot_id) FROM mistral_quota_values q2 JOIN mistral_snapshots s ON s.id=q2.snapshot_id WHERE s.account_id=? AND s.identity=? AND q2.quota_name=keys.name) JOIN mistral_snapshots qs ON qs.id=q.snapshot_id ORDER BY q.quota_name`, s.accountID, snap.Identity)
 	if e != nil {
 		return nil, e
 	}
@@ -129,7 +130,7 @@ func (s *Store) LatestMistral(ctx context.Context) (*api.MistralSnapshot, error)
 	}
 	var amount float64
 	var currency, periodStart, periodEnd, billedAt, status string
-	e = s.db.QueryRowContext(ctx, mistralLatestBillingSQL, snap.Identity).Scan(&amount, &currency, &periodStart, &periodEnd, &billedAt, &status)
+	e = s.db.QueryRowContext(ctx, mistralLatestBillingSQL, s.accountID, snap.Identity).Scan(&amount, &currency, &periodStart, &periodEnd, &billedAt, &status)
 	if e == nil {
 		snap.Billing = mistralBillingFromRow(amount, currency, periodStart, periodEnd, billedAt, status)
 	} else if e != sql.ErrNoRows {
@@ -148,7 +149,7 @@ func (s *Store) MistralHistory(ctx context.Context, start, end time.Time, limit 
 	// before joining. The identity filter has to stay inside it too, or it no
 	// longer bounds what LIMIT sees.
 	rows, e := s.db.QueryContext(ctx, `SELECT r.id,r.identity,r.captured_at,r.status,q.quota_name,q.used,q.limit_value,q.utilization,q.currency,q.resets_at,b.amount,b.currency,b.period_start,b.period_end,b.captured_at,b.status FROM (`+mistralHistoryWindowSQL+`) r LEFT JOIN mistral_quota_values q ON q.snapshot_id=r.id LEFT JOIN mistral_billing b ON b.snapshot_id=r.id ORDER BY r.id, q.quota_name`,
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), max(1, min(limit, 200)))
+		s.accountID, s.mistralIdentityKey(), start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), max(1, min(limit, 200)))
 	if e != nil {
 		return nil, e
 	}
@@ -212,7 +213,7 @@ func (s *Store) TrackMistral(ctx context.Context, identity string, q api.Mistral
 	var reset sql.NullString
 	var lastUsed, lastLimit float64
 	var lastAt string
-	e = tx.QueryRowContext(ctx, `SELECT id,resets_at,last_used,last_limit,last_at FROM mistral_cycles WHERE identity=? AND quota_name=? AND cycle_end IS NULL`, identity, q.Name).Scan(&id, &reset, &lastUsed, &lastLimit, &lastAt)
+	e = tx.QueryRowContext(ctx, `SELECT id,resets_at,last_used,last_limit,last_at FROM mistral_cycles WHERE account_id=? AND identity=? AND quota_name=? AND cycle_end IS NULL`, s.accountID, identity, q.Name).Scan(&id, &reset, &lastUsed, &lastLimit, &lastAt)
 	if e != nil && e != sql.ErrNoRows {
 		return false, e
 	}
@@ -226,7 +227,7 @@ func (s *Store) TrackMistral(ctx context.Context, identity string, q api.Mistral
 		oldReset, _ := time.Parse(time.RFC3339Nano, reset.String)
 		didReset = reset.Valid && q.ResetsAt != nil && !q.CapturedAt.Before(oldReset) && q.ResetsAt.After(oldReset)
 		if didReset {
-			if _, e = tx.ExecContext(ctx, `UPDATE mistral_cycles SET cycle_end=? WHERE id=?`, oldReset.Format(time.RFC3339Nano), id); e != nil {
+			if _, e = tx.ExecContext(ctx, `UPDATE mistral_cycles SET cycle_end=? WHERE id=? AND account_id=?`, oldReset.Format(time.RFC3339Nano), id, s.accountID); e != nil {
 				return false, e
 			}
 			fresh = true
@@ -237,13 +238,13 @@ func (s *Store) TrackMistral(ctx context.Context, identity string, q api.Mistral
 		resetAt = q.ResetsAt.Format(time.RFC3339Nano)
 	}
 	if fresh {
-		_, e = tx.ExecContext(ctx, `INSERT INTO mistral_cycles(identity,quota_name,cycle_start,resets_at,peak,delta,last_used,last_limit,last_at) VALUES(?,?,?,?,?,0,?,?,?)`, identity, q.Name, q.CapturedAt.Format(time.RFC3339Nano), resetAt, q.Utilization, q.Used, q.Limit, q.CapturedAt.Format(time.RFC3339Nano))
+		_, e = tx.ExecContext(ctx, `INSERT INTO mistral_cycles(account_id,identity,quota_name,cycle_start,resets_at,peak,delta,last_used,last_limit,last_at) VALUES(?,?,?,?,?,?,0,?,?,?)`, s.accountID, identity, q.Name, q.CapturedAt.Format(time.RFC3339Nano), resetAt, q.Utilization, q.Used, q.Limit, q.CapturedAt.Format(time.RFC3339Nano))
 	} else {
 		delta := 0.0
 		if q.Limit == lastLimit && q.Limit > 0 && q.Used > lastUsed {
 			delta = (q.Used - lastUsed) / q.Limit * 100
 		}
-		_, e = tx.ExecContext(ctx, `UPDATE mistral_cycles SET peak=MAX(peak,?),delta=delta+?,last_used=?,last_limit=?,last_at=?,resets_at=COALESCE(resets_at,?) WHERE id=?`, q.Utilization, delta, q.Used, q.Limit, q.CapturedAt.Format(time.RFC3339Nano), resetAt, id)
+		_, e = tx.ExecContext(ctx, `UPDATE mistral_cycles SET peak=MAX(peak,?),delta=delta+?,last_used=?,last_limit=?,last_at=?,resets_at=COALESCE(resets_at,?) WHERE id=? AND account_id=?`, q.Utilization, delta, q.Used, q.Limit, q.CapturedAt.Format(time.RFC3339Nano), resetAt, id, s.accountID)
 	}
 	if e != nil {
 		return false, e
@@ -251,7 +252,7 @@ func (s *Store) TrackMistral(ctx context.Context, identity string, q api.Mistral
 	return didReset, tx.Commit()
 }
 func (s *Store) MistralCycles(ctx context.Context, name string, limit int) ([]MistralCycle, error) {
-	rows, e := s.db.QueryContext(ctx, `SELECT id,quota_name,cycle_start,cycle_end,resets_at,peak,delta FROM mistral_cycles WHERE identity=`+mistralActiveIdentity+` AND quota_name=? ORDER BY id DESC LIMIT ?`, name, max(1, min(limit, 200)))
+	rows, e := s.db.QueryContext(ctx, `SELECT id,quota_name,cycle_start,cycle_end,resets_at,peak,delta FROM mistral_cycles WHERE account_id=? AND identity=`+mistralActiveIdentity+` AND quota_name=? ORDER BY id DESC LIMIT ?`, s.accountID, s.mistralIdentityKey(), name, max(1, min(limit, 200)))
 	if e != nil {
 		return nil, e
 	}
@@ -296,7 +297,7 @@ func (s *Store) PruneMistral(ctx context.Context, before time.Time) error {
 	for i, stmt := range []string{
 		`DROP TABLE IF EXISTS temp.mistral_prune`,
 		// Preserve latest values per source for reconnect, even beyond retention.
-		`CREATE TEMP TABLE mistral_prune AS SELECT id FROM mistral_snapshots WHERE captured_at<? AND id NOT IN (SELECT MAX(id) FROM mistral_snapshots GROUP BY identity) AND id NOT IN (SELECT MAX(q.snapshot_id) FROM mistral_quota_values q JOIN mistral_snapshots s ON s.id=q.snapshot_id GROUP BY s.identity,q.quota_name) AND id NOT IN (SELECT MAX(b.snapshot_id) FROM mistral_billing b JOIN mistral_snapshots s ON s.id=b.snapshot_id GROUP BY s.identity)`,
+		`CREATE TEMP TABLE mistral_prune AS SELECT id FROM mistral_snapshots WHERE account_id=? AND captured_at<? AND id NOT IN (SELECT MAX(id) FROM mistral_snapshots GROUP BY account_id,identity) AND id NOT IN (SELECT MAX(q.snapshot_id) FROM mistral_quota_values q JOIN mistral_snapshots s ON s.id=q.snapshot_id GROUP BY s.account_id,s.identity,q.quota_name) AND id NOT IN (SELECT MAX(b.snapshot_id) FROM mistral_billing b JOIN mistral_snapshots s ON s.id=b.snapshot_id GROUP BY s.account_id,s.identity)`,
 		`DELETE FROM mistral_quota_values WHERE snapshot_id IN (SELECT id FROM temp.mistral_prune)`,
 		`DELETE FROM mistral_billing WHERE snapshot_id IN (SELECT id FROM temp.mistral_prune)`,
 		`DELETE FROM mistral_snapshots WHERE id IN (SELECT id FROM temp.mistral_prune)`,
@@ -304,13 +305,13 @@ func (s *Store) PruneMistral(ctx context.Context, before time.Time) error {
 	} {
 		var args []any
 		if i == 1 {
-			args = []any{before.Format(time.RFC3339Nano)}
+			args = []any{s.accountID, before.Format(time.RFC3339Nano)}
 		}
 		if _, e = tx.ExecContext(ctx, stmt, args...); e != nil {
 			return e
 		}
 	}
-	_, e = tx.ExecContext(ctx, `DELETE FROM mistral_cycles WHERE cycle_end IS NOT NULL AND cycle_end<?`, before.Format(time.RFC3339Nano))
+	_, e = tx.ExecContext(ctx, `DELETE FROM mistral_cycles WHERE account_id=? AND cycle_end IS NOT NULL AND cycle_end<?`, s.accountID, before.Format(time.RFC3339Nano))
 	if e != nil {
 		return e
 	}
@@ -331,7 +332,7 @@ func (s *Store) MistralCycleOverview(ctx context.Context, name string) ([]CycleO
 		}
 		var id int64
 		var at string
-		e = s.db.QueryRowContext(ctx, `SELECT s.id,s.captured_at FROM mistral_snapshots s JOIN mistral_quota_values q ON q.snapshot_id=s.id WHERE s.identity=`+mistralActiveIdentity+` AND q.quota_name=? AND s.captured_at>=? AND s.captured_at<? ORDER BY q.utilization DESC LIMIT 1`, name, c.CycleStart.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&id, &at)
+		e = s.db.QueryRowContext(ctx, `SELECT s.id,s.captured_at FROM mistral_snapshots s JOIN mistral_quota_values q ON q.snapshot_id=s.id WHERE s.account_id=? AND s.identity=`+mistralActiveIdentity+` AND q.quota_name=? AND s.captured_at>=? AND s.captured_at<? ORDER BY q.utilization DESC LIMIT 1`, s.accountID, s.mistralIdentityKey(), name, c.CycleStart.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)).Scan(&id, &at)
 		if e == sql.ErrNoRows {
 			result = append(result, row)
 			continue
@@ -362,4 +363,12 @@ func (s *Store) MistralCycleOverview(ctx context.Context, name string) ([]CycleO
 		result = append(result, row)
 	}
 	return result, nil
+}
+
+// mistralIdentityKey preserves the legacy root identity while separating account cursors.
+func (s *Store) mistralIdentityKey() string {
+	if s.accountID == 0 {
+		return "mistral_identity"
+	}
+	return fmt.Sprintf("mistral_identity:%d", s.accountID)
 }

@@ -19,7 +19,9 @@ import (
 
 // Store provides SQLite storage for onWatch
 type Store struct {
-	db *sql.DB
+	db                  *sql.DB
+	accountID           int64
+	credentialsReadOnly bool
 }
 
 // Session represents an agent session
@@ -627,7 +629,6 @@ func (s *Store) createTables() error {
 		CREATE INDEX IF NOT EXISTS idx_antigravity_model_values_model_id ON antigravity_model_values(model_id);
 		CREATE INDEX IF NOT EXISTS idx_antigravity_model_values_model_snapshot ON antigravity_model_values(model_id, snapshot_id);
 		CREATE INDEX IF NOT EXISTS idx_antigravity_cycles_model_start ON antigravity_reset_cycles(model_id, cycle_start);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_antigravity_cycles_model_active_unique ON antigravity_reset_cycles(model_id) WHERE cycle_end IS NULL;
 
 		-- MiniMax-specific tables
 		CREATE TABLE IF NOT EXISTS minimax_snapshots (
@@ -1132,7 +1133,6 @@ func (s *Store) createTables() error {
 			last_at TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_mistral_cycles ON mistral_cycles(identity, quota_name, cycle_start);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_mistral_active_cycle ON mistral_cycles(identity, quota_name) WHERE cycle_end IS NULL;
 
 		-- API integrations telemetry ingestion tables
 		CREATE TABLE IF NOT EXISTS api_integration_usage_events (
@@ -1179,7 +1179,7 @@ func (s *Store) createTables() error {
 		return fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
-	return nil
+	return s.createAccountTables()
 }
 
 // migrateSchema handles schema migrations for existing databases
@@ -1259,7 +1259,6 @@ func (s *Store) migrateSchema() error {
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_antigravity_model_values_model_id ON antigravity_model_values(model_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_antigravity_model_values_model_snapshot ON antigravity_model_values(model_id, snapshot_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_antigravity_cycles_model_active_unique ON antigravity_reset_cycles(model_id) WHERE cycle_end IS NULL`,
 	} {
 		if _, err := s.db.Exec(stmt); err != nil {
 			if !strings.Contains(err.Error(), "no such table") {
@@ -1539,7 +1538,7 @@ func (s *Store) migrateSchema() error {
 		}
 	}
 
-	return nil
+	return s.migrateAccountScope()
 }
 
 func (s *Store) migrateNotificationLogProviderScope() error {
@@ -1630,11 +1629,11 @@ func (s *Store) Close() error {
 func (s *Store) InsertSnapshot(snapshot *api.Snapshot) (int64, error) {
 	result, err := s.db.Exec(
 		`INSERT INTO quota_snapshots 
-		(captured_at, sub_limit, sub_requests, sub_renews_at, 
+		(account_id, captured_at, sub_limit, sub_requests, sub_renews_at,
 		 search_limit, search_requests, search_renews_at,
 		 tool_limit, tool_requests, tool_renews_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.Sub.Limit, snapshot.Sub.Requests, snapshot.Sub.RenewsAt.Format(time.RFC3339Nano),
 		snapshot.Search.Limit, snapshot.Search.Requests, snapshot.Search.RenewsAt.Format(time.RFC3339Nano),
 		snapshot.ToolCall.Limit, snapshot.ToolCall.Requests, snapshot.ToolCall.RenewsAt.Format(time.RFC3339Nano),
@@ -1660,7 +1659,8 @@ func (s *Store) QueryLatest() (*api.Snapshot, error) {
 		`SELECT id, captured_at, sub_limit, sub_requests, sub_renews_at,
 		 search_limit, search_requests, search_renews_at,
 		 tool_limit, tool_requests, tool_renews_at
-		FROM quota_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM quota_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&snapshot.ID, &capturedAt, &snapshot.Sub.Limit, &snapshot.Sub.Requests, &subRenewsAt,
 		&snapshot.Search.Limit, &snapshot.Search.Requests, &searchRenewsAt,
@@ -1689,9 +1689,9 @@ func (s *Store) QueryRange(start, end time.Time, limit ...int) ([]*api.Snapshot,
 		 search_limit, search_requests, search_renews_at,
 		 tool_limit, tool_requests, tool_renews_at
 		FROM quota_snapshots
-		WHERE captured_at BETWEEN ? AND ?
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 		ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+	args := []interface{}{s.accountID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, sub_limit, sub_requests, sub_renews_at,
 			 search_limit, search_requests, search_renews_at,
@@ -1701,7 +1701,7 @@ func (s *Store) QueryRange(start, end time.Time, limit ...int) ([]*api.Snapshot,
 					search_limit, search_requests, search_renews_at,
 					tool_limit, tool_requests, tool_renews_at
 				FROM quota_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -1720,10 +1720,10 @@ func (s *Store) QueryRange(start, end time.Time, limit ...int) ([]*api.Snapshot,
 // sampling in SQL avoids loading every poll of a 30-day range.
 func (s *Store) QueryRangeSampled(start, end time.Time) ([]*api.Snapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("quota_snapshots", `id, captured_at, sub_limit, sub_requests, sub_renews_at,
+		scopedWindowChartQuery("quota_snapshots", `id, captured_at, sub_limit, sub_requests, sub_renews_at,
 		 search_limit, search_requests, search_renews_at,
 		 tool_limit, tool_requests, tool_renews_at`),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled range: %w", err)
@@ -1775,8 +1775,8 @@ func (s *Store) CreateSession(sessionID string, startedAt time.Time, pollInterva
 		startTool = startValues[2]
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, started_at, poll_interval, provider, start_sub_requests, start_search_requests, start_tool_requests) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, startedAt.Format(time.RFC3339Nano), pollInterval, provider, startSub, startSearch, startTool,
+		`INSERT INTO sessions (id, account_id, started_at, poll_interval, provider, start_sub_requests, start_search_requests, start_tool_requests) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, s.accountID, startedAt.Format(time.RFC3339Nano), pollInterval, provider, startSub, startSearch, startTool,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
@@ -1803,8 +1803,8 @@ func (s *Store) CloseOrphanedSessions() (int, error) {
 // CloseSession marks a session as ended
 func (s *Store) CloseSession(sessionID string, endedAt time.Time) error {
 	_, err := s.db.Exec(
-		`UPDATE sessions SET ended_at = ? WHERE id = ?`,
-		endedAt.Format(time.RFC3339Nano), sessionID,
+		`UPDATE sessions SET ended_at = ? WHERE id = ? AND account_id = ?`,
+		endedAt.Format(time.RFC3339Nano), sessionID, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close session: %w", err)
@@ -1819,8 +1819,8 @@ func (s *Store) UpdateSessionMaxRequests(sessionID string, sub, search, tool flo
 			max_sub_requests = CASE WHEN max_sub_requests < ? THEN ? ELSE max_sub_requests END,
 			max_search_requests = CASE WHEN max_search_requests < ? THEN ? ELSE max_search_requests END,
 			max_tool_requests = CASE WHEN max_tool_requests < ? THEN ? ELSE max_tool_requests END
-		WHERE id = ?`,
-		sub, sub, search, search, tool, tool, sessionID,
+		WHERE id = ? AND account_id = ?`,
+		sub, sub, search, search, tool, tool, sessionID, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update session max: %w", err)
@@ -1831,8 +1831,8 @@ func (s *Store) UpdateSessionMaxRequests(sessionID string, sub, search, tool flo
 // IncrementSnapshotCount increments the snapshot count for a session
 func (s *Store) IncrementSnapshotCount(sessionID string) error {
 	_, err := s.db.Exec(
-		`UPDATE sessions SET snapshot_count = snapshot_count + 1 WHERE id = ?`,
-		sessionID,
+		`UPDATE sessions SET snapshot_count = snapshot_count + 1 WHERE id = ? AND account_id = ?`,
+		sessionID, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to increment snapshot count: %w", err)
@@ -1850,7 +1850,8 @@ func (s *Store) QueryActiveSession() (*Session, error) {
 		`SELECT id, started_at, ended_at, poll_interval,
 		 max_sub_requests, max_search_requests, max_tool_requests,
 		 start_sub_requests, start_search_requests, start_tool_requests, snapshot_count
-		FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+		FROM sessions WHERE account_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&session.ID, &startedAt, &endedAt, &session.PollInterval,
 		&session.MaxSubRequests, &session.MaxSearchRequests, &session.MaxToolRequests,
@@ -1879,10 +1880,10 @@ func (s *Store) QuerySessionHistory(provider ...string) ([]*Session, error) {
 	query := `SELECT id, started_at, ended_at, poll_interval,
 		 max_sub_requests, max_search_requests, max_tool_requests,
 		 start_sub_requests, start_search_requests, start_tool_requests, snapshot_count
-		FROM sessions`
-	var args []interface{}
+		FROM sessions WHERE account_id = ?`
+	args := []interface{}{s.accountID}
 	if len(provider) > 0 && provider[0] != "" {
-		query += ` WHERE provider = ?`
+		query += ` AND provider = ?`
 		args = append(args, provider[0])
 	}
 	query += ` ORDER BY started_at DESC`
@@ -1923,8 +1924,8 @@ func (s *Store) QuerySessionHistory(provider ...string) ([]*Session, error) {
 // CreateCycle creates a new reset cycle
 func (s *Store) CreateCycle(quotaType string, cycleStart, renewsAt time.Time) (int64, error) {
 	result, err := s.db.Exec(
-		`INSERT INTO reset_cycles (quota_type, cycle_start, renews_at) VALUES (?, ?, ?)`,
-		quotaType, cycleStart.Format(time.RFC3339Nano), renewsAt.Format(time.RFC3339Nano),
+		`INSERT INTO reset_cycles (account_id, quota_type, cycle_start, renews_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaType, cycleStart.Format(time.RFC3339Nano), renewsAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create cycle: %w", err)
@@ -1942,8 +1943,8 @@ func (s *Store) CreateCycle(quotaType string, cycleStart, renewsAt time.Time) (i
 func (s *Store) CloseCycle(quotaType string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE reset_cycles SET cycle_end = ?, peak_requests = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaType,
+		WHERE quota_type = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaType, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close cycle: %w", err)
@@ -1955,8 +1956,8 @@ func (s *Store) CloseCycle(quotaType string, cycleEnd time.Time, peak, delta flo
 func (s *Store) UpdateCycle(quotaType string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE reset_cycles SET peak_requests = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		peak, delta, quotaType,
+		WHERE quota_type = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaType, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update cycle: %w", err)
@@ -1971,8 +1972,8 @@ func (s *Store) QueryActiveCycle(quotaType string) (*ResetCycle, error) {
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_type, cycle_start, cycle_end, renews_at, peak_requests, total_delta
-		FROM reset_cycles WHERE quota_type = ? AND cycle_end IS NULL`,
-		quotaType,
+		FROM reset_cycles WHERE quota_type = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaType, s.accountID,
 	).Scan(
 		&cycle.ID, &cycle.QuotaType, &cycleStart, &cycle.CycleEnd, &renewsAt, &cycle.PeakRequests, &cycle.TotalDelta,
 	)
@@ -1993,8 +1994,8 @@ func (s *Store) QueryActiveCycle(quotaType string) (*ResetCycle, error) {
 // QueryCycleHistory returns completed cycles for a quota type with optional limit.
 func (s *Store) QueryCycleHistory(quotaType string, limit ...int) ([]*ResetCycle, error) {
 	query := `SELECT id, quota_type, cycle_start, cycle_end, renews_at, peak_requests, total_delta
-		FROM reset_cycles WHERE quota_type = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaType}
+		FROM reset_cycles WHERE quota_type = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaType, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -2032,8 +2033,8 @@ func (s *Store) QueryCycleHistory(quotaType string, limit ...int) ([]*ResetCycle
 func (s *Store) QueryCyclesSince(quotaType string, since time.Time) ([]*ResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_type, cycle_start, cycle_end, renews_at, peak_requests, total_delta
-		FROM reset_cycles WHERE quota_type = ? AND cycle_start >= ? ORDER BY cycle_start DESC`,
-		quotaType, since.UTC().Format(time.RFC3339Nano),
+		FROM reset_cycles WHERE quota_type = ? AND account_id = ? AND cycle_start >= ? ORDER BY cycle_start DESC`,
+		quotaType, s.accountID, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query cycles since: %w", err)
@@ -2131,9 +2132,9 @@ func (s *Store) QuerySyntheticCycleOverview(groupBy string, limit int) ([]CycleO
 		err = s.db.QueryRow(
 			fmt.Sprintf(`SELECT captured_at, sub_limit, sub_requests, search_limit, search_requests, tool_limit, tool_requests
 			FROM quota_snapshots
-			WHERE captured_at >= ? AND captured_at < ?
+			WHERE account_id = ? AND captured_at >= ? AND captured_at < ?
 			ORDER BY %s DESC LIMIT 1`, peakCol),
-			c.CycleStart.Format(time.RFC3339Nano),
+			s.accountID, c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&capturedAt, &subLimit, &subReq, &searchLimit, &searchReq, &toolLimit, &toolReq)
 
@@ -2206,6 +2207,10 @@ func (s *Store) SetSetting(key, value string) error {
 func (s *Store) AutoRefreshTokensEnabled() bool {
 	if s == nil {
 		return true
+	}
+	// Additional accounts do not own a coding harness's rotating tokens.
+	if s.accountID != 0 || s.credentialsReadOnly {
+		return false
 	}
 	val, err := s.GetSetting(SettingAutoRefreshTokens)
 	if err != nil || val == "" {
@@ -2651,9 +2656,9 @@ func (s *Store) UpsertNotificationLogAt(provider, quotaKey, notifType string, ut
 		provider = "legacy"
 	}
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO notification_log (provider, quota_key, notification_type, sent_at, utilization)
-		 VALUES (?, ?, ?, ?, ?)`,
-		provider, quotaKey, notifType, at.UTC().Format(time.RFC3339Nano), util,
+		`INSERT OR REPLACE INTO notification_log (account_id, provider, quota_key, notification_type, sent_at, utilization)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		s.accountID, provider, quotaKey, notifType, at.UTC().Format(time.RFC3339Nano), util,
 	)
 	if err != nil {
 		return fmt.Errorf("store.UpsertNotificationLog: %w", err)
@@ -2671,8 +2676,8 @@ func (s *Store) GetLastNotification(provider, quotaKey, notifType string) (time.
 	var util float64
 	err := s.db.QueryRow(
 		`SELECT sent_at, utilization FROM notification_log
-		WHERE provider = ? AND quota_key = ? AND notification_type = ?`,
-		provider, quotaKey, notifType,
+		WHERE account_id = ? AND provider = ? AND quota_key = ? AND notification_type = ?`,
+		s.accountID, provider, quotaKey, notifType,
 	).Scan(&sentAtStr, &util)
 	if err == sql.ErrNoRows {
 		return time.Time{}, 0, nil
@@ -2690,7 +2695,7 @@ func (s *Store) ClearNotificationLog(provider, quotaKey string) error {
 	if provider == "" {
 		provider = "legacy"
 	}
-	_, err := s.db.Exec(`DELETE FROM notification_log WHERE provider = ? AND quota_key = ?`, provider, quotaKey)
+	_, err := s.db.Exec(`DELETE FROM notification_log WHERE account_id = ? AND provider = ? AND quota_key = ?`, s.accountID, provider, quotaKey)
 	if err != nil {
 		return fmt.Errorf("store.ClearNotificationLog: %w", err)
 	}
@@ -2782,9 +2787,9 @@ type SystemAlert struct {
 func (s *Store) CreateSystemAlert(provider, alertType, title, message, severity string, metadata string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.Exec(`
-		INSERT INTO system_alerts (provider, alert_type, title, message, severity, created_at, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, provider, alertType, title, message, severity, now, metadata)
+		INSERT INTO system_alerts (account_id, provider, alert_type, title, message, severity, created_at, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, s.accountID, provider, alertType, title, message, severity, now, metadata)
 	if err != nil {
 		return 0, fmt.Errorf("store.CreateSystemAlert: %w", err)
 	}
@@ -2857,8 +2862,8 @@ func (s *Store) HasActiveAlertOfType(provider, alertType string) (bool, error) {
 	var count int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM system_alerts
-		WHERE provider = ? AND alert_type = ? AND dismissed_at IS NULL
-	`, provider, alertType).Scan(&count)
+		WHERE account_id = ? AND provider = ? AND alert_type = ? AND dismissed_at IS NULL
+	`, s.accountID, provider, alertType).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("store.HasActiveAlertOfType: %w", err)
 	}

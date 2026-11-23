@@ -43,8 +43,8 @@ func (s *Store) InsertGeminiSnapshot(snapshot *api.GeminiSnapshot) (int64, error
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO gemini_snapshots (captured_at, tier, project_id, raw_json, quota_count) VALUES (?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO gemini_snapshots (account_id, captured_at, tier, project_id, raw_json, quota_count) VALUES (?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.Tier,
 		snapshot.ProjectID,
 		snapshot.RawJSON,
@@ -90,7 +90,8 @@ func (s *Store) QueryLatestGemini() (*api.GeminiSnapshot, error) {
 
 	err := s.db.QueryRow(
 		`SELECT id, captured_at, tier, project_id, quota_count
-		FROM gemini_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM gemini_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(&snapshot.ID, &capturedAt, &tier, &projectID, new(int))
 
 	if err == sql.ErrNoRows {
@@ -144,14 +145,14 @@ func (s *Store) QueryLatestGemini() (*api.GeminiSnapshot, error) {
 // QueryGeminiRange returns Gemini snapshots within a time range.
 func (s *Store) QueryGeminiRange(start, end time.Time, limit ...int) ([]*api.GeminiSnapshot, error) {
 	query := `SELECT id, captured_at, tier, project_id, quota_count FROM gemini_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
+	args := []interface{}{s.accountID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, tier, project_id, quota_count
 			FROM (
 				SELECT id, captured_at, tier, project_id, quota_count
 				FROM gemini_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -177,8 +178,8 @@ func (s *Store) QueryGeminiRange(start, end time.Time, limit ...int) ([]*api.Gem
 // across the range (first and last always kept), with their quota values.
 func (s *Store) QueryGeminiRangeSampled(start, end time.Time) ([]*api.GeminiSnapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("gemini_snapshots", "id, captured_at, tier, project_id, quota_count"),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		scopedWindowChartQuery("gemini_snapshots", "id, captured_at, tier, project_id, quota_count"),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled gemini range: %w", err)
@@ -264,8 +265,8 @@ func (s *Store) CreateGeminiCycle(modelID string, cycleStart time.Time, resetTim
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO gemini_reset_cycles (model_id, cycle_start, reset_time) VALUES (?, ?, ?)`,
-		modelID,
+		`INSERT INTO gemini_reset_cycles (account_id, model_id, cycle_start, reset_time) VALUES (?, ?, ?, ?)`,
+		s.accountID, modelID,
 		cycleStart.Format(time.RFC3339Nano),
 		resetTimeVal,
 	)
@@ -284,10 +285,10 @@ func (s *Store) CreateGeminiCycle(modelID string, cycleStart time.Time, resetTim
 func (s *Store) CloseGeminiCycle(modelID string, cycleEnd time.Time, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE gemini_reset_cycles SET cycle_end = ?, peak_usage = ?, total_delta = ?
-		WHERE model_id = ? AND cycle_end IS NULL`,
+		WHERE account_id = ? AND model_id = ? AND cycle_end IS NULL`,
 		cycleEnd.Format(time.RFC3339Nano),
 		peakUsage,
-		totalDelta,
+		totalDelta, s.accountID,
 		modelID,
 	)
 	if err != nil {
@@ -300,9 +301,9 @@ func (s *Store) CloseGeminiCycle(modelID string, cycleEnd time.Time, peakUsage, 
 func (s *Store) UpdateGeminiCycle(modelID string, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE gemini_reset_cycles SET peak_usage = ?, total_delta = ?
-		WHERE model_id = ? AND cycle_end IS NULL`,
+		WHERE account_id = ? AND model_id = ? AND cycle_end IS NULL`,
 		peakUsage,
-		totalDelta,
+		totalDelta, s.accountID,
 		modelID,
 	)
 	if err != nil {
@@ -320,8 +321,8 @@ func (s *Store) UpdateGeminiCycleResetTime(modelID string, resetTime *time.Time)
 
 	_, err := s.db.Exec(
 		`UPDATE gemini_reset_cycles SET reset_time = ?
-		WHERE model_id = ? AND cycle_end IS NULL`,
-		resetTimeValue,
+		WHERE account_id = ? AND model_id = ? AND cycle_end IS NULL`,
+		resetTimeValue, s.accountID,
 		modelID,
 	)
 	if err != nil {
@@ -338,8 +339,8 @@ func (s *Store) QueryActiveGeminiCycle(modelID string) (*GeminiResetCycle, error
 
 	err := s.db.QueryRow(
 		`SELECT id, model_id, cycle_start, cycle_end, reset_time, peak_usage, total_delta
-		FROM gemini_reset_cycles WHERE model_id = ? AND cycle_end IS NULL`,
-		modelID,
+		FROM gemini_reset_cycles WHERE account_id = ? AND model_id = ? AND cycle_end IS NULL`,
+		s.accountID, modelID,
 	).Scan(
 		&cycle.ID,
 		&cycle.ModelID,
@@ -383,8 +384,8 @@ func (s *Store) QueryActiveGeminiCycle(modelID string) (*GeminiResetCycle, error
 // QueryGeminiCycleHistory returns completed cycles for a Gemini model with optional limit.
 func (s *Store) QueryGeminiCycleHistory(modelID string, limit ...int) ([]*GeminiResetCycle, error) {
 	query := `SELECT id, model_id, cycle_start, cycle_end, reset_time, peak_usage, total_delta
-		FROM gemini_reset_cycles WHERE model_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{modelID}
+		FROM gemini_reset_cycles WHERE account_id = ? AND model_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{s.accountID, modelID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -445,9 +446,9 @@ func (s *Store) QueryGeminiUsageSeries(modelID string, since time.Time) ([]Gemin
 		`SELECT s.captured_at, qv.remaining_fraction
 		FROM gemini_quota_values qv
 		JOIN gemini_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.model_id = ? AND s.captured_at >= ?
+		WHERE s.account_id = ? AND qv.model_id = ? AND s.captured_at >= ?
 		ORDER BY s.captured_at ASC`,
-		modelID,
+		s.accountID, modelID,
 		since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -524,9 +525,9 @@ func (s *Store) QueryGeminiCycleOverview(modelID string, limit int) ([]CycleOver
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM gemini_snapshots s
 			JOIN gemini_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.model_id = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE s.account_id = ? AND qv.model_id = ? AND s.captured_at >= ? AND s.captured_at < ?
 			ORDER BY qv.usage_percent DESC LIMIT 1`,
-			modelID,
+			s.accountID, modelID,
 			c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&snapshotID, &capturedAt)
@@ -579,13 +580,13 @@ func (s *Store) QueryGeminiCycleOverview(modelID string, limit int) ([]CycleOver
 func (s *Store) SaveGeminiTokens(accessToken, refreshToken string, expiresAt int64) error {
 	data := fmt.Sprintf(`{"access_token":%q,"refresh_token":%q,"expires_at":%d}`,
 		accessToken, refreshToken, expiresAt)
-	return s.SetSetting("gemini_tokens", data)
+	return s.SetSetting(s.geminiTokensSettingKey(), data)
 }
 
 // LoadGeminiTokens retrieves persisted Gemini OAuth tokens from the settings table.
 // Returns empty strings if no tokens are stored.
 func (s *Store) LoadGeminiTokens() (accessToken, refreshToken string, expiresAt int64, err error) {
-	data, err := s.GetSetting("gemini_tokens")
+	data, err := s.GetSetting(s.geminiTokensSettingKey())
 	if err != nil || data == "" {
 		return "", "", 0, err
 	}
@@ -603,7 +604,10 @@ func (s *Store) LoadGeminiTokens() (accessToken, refreshToken string, expiresAt 
 // QueryAllGeminiModelIDs returns all distinct model IDs from Gemini quota values.
 func (s *Store) QueryAllGeminiModelIDs() ([]string, error) {
 	rows, err := s.db.Query(
-		skipScanDistinctSQL("gemini_quota_values", "model_id"),
+		`SELECT DISTINCT v.model_id FROM gemini_quota_values v
+		JOIN gemini_snapshots p ON p.id = v.snapshot_id
+		WHERE p.account_id = ? AND v.model_id > '' ORDER BY v.model_id`,
+		s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query gemini model IDs: %w", err)
@@ -620,4 +624,11 @@ func (s *Store) QueryAllGeminiModelIDs() ([]string, error) {
 	}
 
 	return ids, rows.Err()
+}
+
+func (s *Store) geminiTokensSettingKey() string {
+	if s.accountID == 0 {
+		return "gemini_tokens"
+	}
+	return fmt.Sprintf("gemini_tokens:%d", s.accountID)
 }

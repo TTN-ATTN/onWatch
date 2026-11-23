@@ -27,7 +27,7 @@ func (s *Store) InsertGrokSnapshot(snapshot *api.GrokSnapshot) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	accountID := snapshot.AccountID
+	accountID := s.accountIDOr(snapshot.AccountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}
@@ -78,6 +78,7 @@ func (s *Store) InsertGrokSnapshot(snapshot *api.GrokSnapshot) (int64, error) {
 
 // QueryLatestGrok returns the most recent Grok snapshot with quotas for the given account.
 func (s *Store) QueryLatestGrok(accountID int64) (*api.GrokSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}
@@ -146,6 +147,7 @@ func (s *Store) QueryLatestGrok(accountID int64) (*api.GrokSnapshot, error) {
 
 // QueryGrokRange returns grok snapshots in [start, end] for charts (account aware).
 func (s *Store) QueryGrokRange(accountID int64, start, end time.Time, limit ...int) ([]*api.GrokSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}
@@ -187,6 +189,7 @@ func (s *Store) QueryGrokRange(accountID int64, start, end time.Time, limit ...i
 // Snapshot ids are sampled first, then joined to their values, so the sample
 // is not skewed by how many quotas each snapshot carries.
 func (s *Store) QueryGrokRangeSampled(accountID int64, start, end time.Time) ([]*api.GrokSnapshot, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}
@@ -272,7 +275,7 @@ type GrokResetCycle struct {
 
 // InsertGrokResetCycle creates a new cycle row.
 func (s *Store) InsertGrokResetCycle(cycle *GrokResetCycle) (int64, error) {
-	acc := cycle.AccountID
+	acc := s.accountIDOr(cycle.AccountID)
 	if acc == 0 {
 		acc = DefaultGrokAccountID
 	}
@@ -297,6 +300,7 @@ func (s *Store) InsertGrokResetCycle(cycle *GrokResetCycle) (int64, error) {
 
 // QueryActiveGrokResetCycle returns the open cycle (no end) for a quota if present.
 func (s *Store) QueryActiveGrokResetCycle(accountID int64, quotaName string) (*GrokResetCycle, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}
@@ -329,8 +333,8 @@ func (s *Store) QueryActiveGrokResetCycle(accountID int64, quotaName string) (*G
 // UpdateGrokResetCycleEnd closes a cycle.
 func (s *Store) UpdateGrokResetCycleEnd(id int64, end time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
-		`UPDATE grok_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ? WHERE id = ?`,
-		end.Format(time.RFC3339Nano), peak, delta, id,
+		`UPDATE grok_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ? WHERE id = ? AND (? = 0 OR account_id = ?)`,
+		end.Format(time.RFC3339Nano), peak, delta, id, s.accountID, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close grok reset cycle: %w", err)
@@ -340,6 +344,7 @@ func (s *Store) UpdateGrokResetCycleEnd(id int64, end time.Time, peak, delta flo
 
 // QueryGrokCyclesForQuota returns recent cycles (closed + active) for summary stats. Limit applied.
 func (s *Store) QueryGrokCyclesForQuota(accountID int64, quotaName string, limit int) ([]*GrokResetCycle, error) {
+	accountID = s.accountIDOr(accountID)
 	if accountID == 0 {
 		accountID = DefaultGrokAccountID
 	}

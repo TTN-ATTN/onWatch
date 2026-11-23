@@ -52,8 +52,8 @@ func (s *Store) InsertMuseSnapshot(snapshot *api.MuseSnapshot) (int64, error) {
 	}
 
 	result, err := tx.Exec(
-		`INSERT INTO muse_snapshots (captured_at, raw_json, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at, quota_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO muse_snapshots (account_id, captured_at, raw_json, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at, quota_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.RawJSON,
 		snapshot.Tier,
 		snapshot.Model,
@@ -142,7 +142,8 @@ func (s *Store) QueryLatestMuse() (*api.MuseSnapshot, error) {
 
 	err := s.db.QueryRow(
 		`SELECT id, captured_at, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at
-		FROM muse_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM muse_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&snapshot.ID, &capturedAt, &snapshot.Tier, &snapshot.Model,
 		&snapshot.WindowUsedPct, &windowResetsAt, &snapshot.WindowDurationMins,
@@ -170,14 +171,14 @@ func (s *Store) QueryLatestMuse() (*api.MuseSnapshot, error) {
 // QueryMuseRange returns Muse snapshots within a time range with optional limit.
 func (s *Store) QueryMuseRange(start, end time.Time, limit ...int) ([]*api.MuseSnapshot, error) {
 	query := `SELECT id, captured_at, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at FROM muse_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
+	args := []interface{}{s.accountID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at
 			FROM (
 				SELECT id, captured_at, tier, model, window_used, window_resets_at, window_duration_mins, weekly_used, weekly_resets_at
 				FROM muse_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -259,8 +260,8 @@ func (s *Store) CreateMuseCycle(quotaName string, cycleStart time.Time, resetsAt
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO muse_reset_cycles (quota_name, cycle_start, resets_at) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
+		`INSERT INTO muse_reset_cycles (account_id, quota_name, cycle_start, resets_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create muse cycle: %w", err)
@@ -277,8 +278,8 @@ func (s *Store) CreateMuseCycle(quotaName string, cycleStart time.Time, resetsAt
 func (s *Store) CloseMuseCycle(quotaName string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE muse_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close muse cycle: %w", err)
@@ -290,8 +291,8 @@ func (s *Store) CloseMuseCycle(quotaName string, cycleEnd time.Time, peak, delta
 func (s *Store) UpdateMuseCycle(quotaName string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE muse_reset_cycles SET peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update muse cycle: %w", err)
@@ -325,8 +326,8 @@ func scanMuseCycle(rows *sql.Rows) (*MuseResetCycle, error) {
 func (s *Store) QueryActiveMuseCycle(quotaName string) (*MuseResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM muse_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM muse_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query active muse cycle: %w", err)
@@ -346,8 +347,8 @@ func (s *Store) QueryActiveMuseCycle(quotaName string) (*MuseResetCycle, error) 
 // QueryMuseCycleHistory returns closed cycles, newest first.
 func (s *Store) QueryMuseCycleHistory(quotaName string, limit ...int) ([]*MuseResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM muse_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM muse_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -375,9 +376,9 @@ func (s *Store) QueryMuseUtilizationSeries(quotaName string, since time.Time) ([
 		`SELECT s.captured_at, qv.utilization
 		FROM muse_quota_values qv
 		JOIN muse_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		s.accountID, quotaName, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query utilization series: %w", err)
@@ -405,8 +406,8 @@ func (s *Store) QueryMuseLatestPerQuota() ([]MuseLatestQuota, error) {
 		       s.captured_at, s.tier, s.model
 		FROM muse_quota_values qv
 		JOIN muse_snapshots s ON s.id = qv.snapshot_id
-		WHERE s.id = (SELECT MAX(id) FROM muse_snapshots)
-		ORDER BY qv.quota_name ASC`)
+		WHERE s.id = (SELECT MAX(id) FROM muse_snapshots WHERE account_id = ?)
+		ORDER BY qv.quota_name ASC`, s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest per-quota: %w", err)
 	}
@@ -445,7 +446,8 @@ func (s *Store) QueryMuseLatestPerQuota() ([]MuseLatestQuota, error) {
 // QueryAllMuseQuotaNames returns quota windows seen in reset cycles.
 func (s *Store) QueryAllMuseQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM muse_reset_cycles ORDER BY quota_name`,
+		`SELECT DISTINCT quota_name FROM muse_reset_cycles WHERE account_id = ? ORDER BY quota_name`,
+		s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query muse quota names: %w", err)
@@ -519,9 +521,9 @@ func (s *Store) QueryMuseCycleOverview(groupBy string, limit int) ([]CycleOvervi
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM muse_snapshots s
 			JOIN muse_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
 			ORDER BY qv.utilization DESC LIMIT 1`,
-			groupBy,
+			s.accountID, groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&snapshotID, &capturedAt)

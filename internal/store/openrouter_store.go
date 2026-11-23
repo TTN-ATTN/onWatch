@@ -36,10 +36,10 @@ func (s *Store) InsertOpenRouterSnapshot(snapshot *api.OpenRouterSnapshot) (int6
 
 	result, err := s.db.Exec(
 		`INSERT INTO openrouter_snapshots
-		(captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
+		(account_id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 		 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.Label,
 		snapshot.Usage,
 		snapshot.UsageDaily,
@@ -73,7 +73,8 @@ func (s *Store) QueryLatestOpenRouter() (*api.OpenRouterSnapshot, error) {
 	err := s.db.QueryRow(
 		`SELECT id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 		 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval
-		FROM openrouter_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM openrouter_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&snapshot.ID, &capturedAt, &snapshot.Label,
 		&snapshot.Usage, &snapshot.UsageDaily, &snapshot.UsageWeekly, &snapshot.UsageMonthly,
@@ -105,9 +106,9 @@ func (s *Store) QueryOpenRouterRange(start, end time.Time, limit ...int) ([]*api
 	query := `SELECT id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 		 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval
 		FROM openrouter_snapshots
-		WHERE captured_at BETWEEN ? AND ?
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 		ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+	args := []interface{}{s.accountID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 			 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval
@@ -115,7 +116,7 @@ func (s *Store) QueryOpenRouterRange(start, end time.Time, limit ...int) ([]*api
 				SELECT id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 					 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval
 				FROM openrouter_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -133,9 +134,9 @@ func (s *Store) QueryOpenRouterRange(start, end time.Time, limit ...int) ([]*api
 // evenly across the range (first and last always kept).
 func (s *Store) QueryOpenRouterRangeSampled(start, end time.Time) ([]*api.OpenRouterSnapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("openrouter_snapshots", `id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
+		scopedWindowChartQuery("openrouter_snapshots", `id, captured_at, label, usage, usage_daily, usage_weekly, usage_monthly,
 		 credit_limit, limit_remaining, is_free_tier, rate_limit_requests, rate_limit_interval`),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled openrouter range: %w", err)
@@ -181,8 +182,8 @@ func scanOpenRouterSnapshotRows(rows *sql.Rows) ([]*api.OpenRouterSnapshot, erro
 // CreateOpenRouterCycle creates a new OpenRouter reset cycle.
 func (s *Store) CreateOpenRouterCycle(quotaType string, cycleStart time.Time) (int64, error) {
 	result, err := s.db.Exec(
-		`INSERT INTO openrouter_reset_cycles (quota_type, cycle_start) VALUES (?, ?)`,
-		quotaType, cycleStart.Format(time.RFC3339Nano),
+		`INSERT INTO openrouter_reset_cycles (account_id, quota_type, cycle_start) VALUES (?, ?, ?)`,
+		s.accountID, quotaType, cycleStart.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create openrouter cycle: %w", err)
@@ -200,8 +201,8 @@ func (s *Store) CreateOpenRouterCycle(quotaType string, cycleStart time.Time) (i
 func (s *Store) CloseOpenRouterCycle(quotaType string, cycleEnd time.Time, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE openrouter_reset_cycles SET cycle_end = ?, peak_usage = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peakUsage, totalDelta, quotaType,
+		WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peakUsage, totalDelta, s.accountID, quotaType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close openrouter cycle: %w", err)
@@ -213,8 +214,8 @@ func (s *Store) CloseOpenRouterCycle(quotaType string, cycleEnd time.Time, peakU
 func (s *Store) UpdateOpenRouterCycle(quotaType string, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE openrouter_reset_cycles SET peak_usage = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		peakUsage, totalDelta, quotaType,
+		WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		peakUsage, totalDelta, s.accountID, quotaType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update openrouter cycle: %w", err)
@@ -230,8 +231,8 @@ func (s *Store) QueryActiveOpenRouterCycle(quotaType string) (*OpenRouterResetCy
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_type, cycle_start, cycle_end, peak_usage, total_delta
-		FROM openrouter_reset_cycles WHERE quota_type = ? AND cycle_end IS NULL`,
-		quotaType,
+		FROM openrouter_reset_cycles WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		s.accountID, quotaType,
 	).Scan(
 		&cycle.ID, &cycle.QuotaType, &cycleStart, &cycleEnd, &cycle.PeakUsage, &cycle.TotalDelta,
 	)
@@ -255,8 +256,8 @@ func (s *Store) QueryActiveOpenRouterCycle(quotaType string) (*OpenRouterResetCy
 // QueryOpenRouterCycleHistory returns completed cycles for an OpenRouter quota type with optional limit.
 func (s *Store) QueryOpenRouterCycleHistory(quotaType string, limit ...int) ([]*OpenRouterResetCycle, error) {
 	query := `SELECT id, quota_type, cycle_start, cycle_end, peak_usage, total_delta
-		FROM openrouter_reset_cycles WHERE quota_type = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaType}
+		FROM openrouter_reset_cycles WHERE account_id = ? AND quota_type = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{s.accountID, quotaType}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])

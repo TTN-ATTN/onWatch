@@ -22,9 +22,9 @@ type MoonshotResetCycle struct {
 func (s *Store) InsertMoonshotSnapshot(snapshot *api.MoonshotSnapshot) (int64, error) {
 	result, err := s.db.Exec(
 		`INSERT INTO moonshot_snapshots
-		(captured_at, available_balance, voucher_balance, cash_balance)
-		VALUES (?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		(account_id, captured_at, available_balance, voucher_balance, cash_balance)
+		VALUES (?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.AvailableBalance,
 		snapshot.VoucherBalance,
 		snapshot.CashBalance,
@@ -48,7 +48,8 @@ func (s *Store) QueryLatestMoonshot() (*api.MoonshotSnapshot, error) {
 
 	err := s.db.QueryRow(
 		`SELECT id, captured_at, available_balance, voucher_balance, cash_balance
-		FROM moonshot_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM moonshot_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&snapshot.ID, &capturedAt, &snapshot.AvailableBalance, &snapshot.VoucherBalance, &snapshot.CashBalance,
 	)
@@ -69,15 +70,15 @@ func (s *Store) QueryLatestMoonshot() (*api.MoonshotSnapshot, error) {
 func (s *Store) QueryMoonshotRange(start, end time.Time, limit ...int) ([]*api.MoonshotSnapshot, error) {
 	query := `SELECT id, captured_at, available_balance, voucher_balance, cash_balance
 		FROM moonshot_snapshots
-		WHERE captured_at BETWEEN ? AND ?
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 		ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+	args := []interface{}{s.accountID, start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, available_balance, voucher_balance, cash_balance
 			FROM (
 				SELECT id, captured_at, available_balance, voucher_balance, cash_balance
 				FROM moonshot_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -95,8 +96,8 @@ func (s *Store) QueryMoonshotRange(start, end time.Time, limit ...int) ([]*api.M
 // across the range (first and last always kept).
 func (s *Store) QueryMoonshotRangeSampled(start, end time.Time) ([]*api.MoonshotSnapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("moonshot_snapshots", "id, captured_at, available_balance, voucher_balance, cash_balance"),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		scopedWindowChartQuery("moonshot_snapshots", "id, captured_at, available_balance, voucher_balance, cash_balance"),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled moonshot range: %w", err)
@@ -129,8 +130,8 @@ func scanMoonshotSnapshotRows(rows *sql.Rows) ([]*api.MoonshotSnapshot, error) {
 // CreateMoonshotCycle creates a new Moonshot reset cycle.
 func (s *Store) CreateMoonshotCycle(quotaType string, cycleStart time.Time) (int64, error) {
 	result, err := s.db.Exec(
-		`INSERT INTO moonshot_reset_cycles (quota_type, cycle_start) VALUES (?, ?)`,
-		quotaType, cycleStart.Format(time.RFC3339Nano),
+		`INSERT INTO moonshot_reset_cycles (account_id, quota_type, cycle_start) VALUES (?, ?, ?)`,
+		s.accountID, quotaType, cycleStart.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create moonshot cycle: %w", err)
@@ -148,8 +149,8 @@ func (s *Store) CreateMoonshotCycle(quotaType string, cycleStart time.Time) (int
 func (s *Store) CloseMoonshotCycle(quotaType string, cycleEnd time.Time, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE moonshot_reset_cycles SET cycle_end = ?, peak_usage = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peakUsage, totalDelta, quotaType,
+		WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peakUsage, totalDelta, s.accountID, quotaType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close moonshot cycle: %w", err)
@@ -161,8 +162,8 @@ func (s *Store) CloseMoonshotCycle(quotaType string, cycleEnd time.Time, peakUsa
 func (s *Store) UpdateMoonshotCycle(quotaType string, peakUsage, totalDelta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE moonshot_reset_cycles SET peak_usage = ?, total_delta = ?
-		WHERE quota_type = ? AND cycle_end IS NULL`,
-		peakUsage, totalDelta, quotaType,
+		WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		peakUsage, totalDelta, s.accountID, quotaType,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update moonshot cycle: %w", err)
@@ -178,8 +179,8 @@ func (s *Store) QueryActiveMoonshotCycle(quotaType string) (*MoonshotResetCycle,
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_type, cycle_start, cycle_end, peak_usage, total_delta
-		FROM moonshot_reset_cycles WHERE quota_type = ? AND cycle_end IS NULL`,
-		quotaType,
+		FROM moonshot_reset_cycles WHERE account_id = ? AND quota_type = ? AND cycle_end IS NULL`,
+		s.accountID, quotaType,
 	).Scan(
 		&cycle.ID, &cycle.QuotaType, &cycleStart, &cycleEnd, &cycle.PeakUsage, &cycle.TotalDelta,
 	)
@@ -203,8 +204,8 @@ func (s *Store) QueryActiveMoonshotCycle(quotaType string) (*MoonshotResetCycle,
 // QueryMoonshotCycleHistory returns completed cycles for a Moonshot quota type with optional limit.
 func (s *Store) QueryMoonshotCycleHistory(quotaType string, limit ...int) ([]*MoonshotResetCycle, error) {
 	query := `SELECT id, quota_type, cycle_start, cycle_end, peak_usage, total_delta
-		FROM moonshot_reset_cycles WHERE quota_type = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaType}
+		FROM moonshot_reset_cycles WHERE account_id = ? AND quota_type = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{s.accountID, quotaType}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])

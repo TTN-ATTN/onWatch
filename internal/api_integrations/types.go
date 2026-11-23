@@ -15,12 +15,20 @@ const (
 	MaxIngestPartialLineBytes = 512 * 1024
 )
 
-var allowedProviders = map[string]struct{}{
-	"anthropic":  {},
-	"openai":     {},
-	"mistral":    {},
-	"openrouter": {},
-	"gemini":     {},
+func validProvider(provider string) bool {
+	if provider == "" || len(provider) > maxIntegrationFieldLen {
+		return false
+	}
+	for i, ch := range provider {
+		if ch >= 'a' && ch <= 'z' {
+			continue
+		}
+		if i > 0 && ((ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // UsageEvent is the normalized API integration telemetry event stored by onWatch.
@@ -29,12 +37,16 @@ type UsageEvent struct {
 	Integration      string
 	Provider         string
 	Account          string
+	AccountID        int64
 	Model            string
 	RequestID        string
 	PromptTokens     int
 	CompletionTokens int
+	CacheReadTokens  int
+	CacheWriteTokens int
 	TotalTokens      int
 	CostUSD          *float64
+	CostSource       string
 	LatencyMS        *int
 	MetadataJSON     string
 	SourcePath       string
@@ -58,10 +70,13 @@ type usageEventWire struct {
 	Integration      string          `json:"integration"`
 	Provider         string          `json:"provider"`
 	Account          string          `json:"account"`
+	AccountID        int64           `json:"account_id"`
 	Model            string          `json:"model"`
 	RequestID        string          `json:"request_id"`
 	PromptTokens     int             `json:"prompt_tokens"`
 	CompletionTokens int             `json:"completion_tokens"`
+	CacheReadTokens  int             `json:"cache_read_tokens"`
+	CacheWriteTokens int             `json:"cache_write_tokens"`
 	TotalTokens      *int            `json:"total_tokens"`
 	CostUSD          *float64        `json:"cost_usd"`
 	LatencyMS        *int            `json:"latency_ms"`
@@ -94,7 +109,7 @@ func ParseUsageEventLine(line []byte, sourcePath string) (*UsageEvent, error) {
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(wire.Provider))
-	if _, ok := allowedProviders[provider]; !ok {
+	if !validProvider(provider) {
 		return nil, fmt.Errorf("unsupported provider %q", provider)
 	}
 
@@ -111,6 +126,16 @@ func ParseUsageEventLine(line []byte, sourcePath string) (*UsageEvent, error) {
 	}
 	if wire.CompletionTokens < 0 {
 		return nil, fmt.Errorf("completion_tokens must be >= 0")
+	}
+	if wire.AccountID < 0 {
+		return nil, fmt.Errorf("account_id must be >= 0")
+	}
+	if wire.CacheReadTokens < 0 || wire.CacheWriteTokens < 0 ||
+		wire.CacheReadTokens > wire.PromptTokens || wire.CacheWriteTokens > wire.PromptTokens-wire.CacheReadTokens {
+		return nil, fmt.Errorf("cache tokens must be disjoint subsets of prompt_tokens")
+	}
+	if wire.PromptTokens > int(^uint(0)>>1)-wire.CompletionTokens {
+		return nil, fmt.Errorf("token total overflows")
 	}
 
 	totalTokens := wire.PromptTokens + wire.CompletionTokens
@@ -157,15 +182,21 @@ func ParseUsageEventLine(line []byte, sourcePath string) (*UsageEvent, error) {
 		Integration:      integrationName,
 		Provider:         provider,
 		Account:          account,
+		AccountID:        wire.AccountID,
 		Model:            model,
 		RequestID:        strings.TrimSpace(wire.RequestID),
 		PromptTokens:     wire.PromptTokens,
 		CompletionTokens: wire.CompletionTokens,
+		CacheReadTokens:  wire.CacheReadTokens,
+		CacheWriteTokens: wire.CacheWriteTokens,
 		TotalTokens:      totalTokens,
 		CostUSD:          wire.CostUSD,
 		LatencyMS:        wire.LatencyMS,
 		MetadataJSON:     metadataJSON,
 		SourcePath:       sourcePath,
+	}
+	if event.CostUSD != nil {
+		event.CostSource = "telemetry"
 	}
 	event.Fingerprint = eventFingerprint(event)
 	return event, nil
@@ -182,6 +213,9 @@ func eventFingerprint(event *UsageEvent) string {
 	writeHashPart(h, fmt.Sprintf("%d", event.PromptTokens))
 	writeHashPart(h, fmt.Sprintf("%d", event.CompletionTokens))
 	writeHashPart(h, fmt.Sprintf("%d", event.TotalTokens))
+	if event.CacheReadTokens != 0 || event.CacheWriteTokens != 0 {
+		writeHashPart(h, fmt.Sprintf("cache:%d:%d", event.CacheReadTokens, event.CacheWriteTokens))
+	}
 	writeHashPart(h, event.RequestID)
 	return hex.EncodeToString(h.Sum(nil))
 }

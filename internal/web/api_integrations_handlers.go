@@ -109,7 +109,7 @@ func (h *Handler) buildAPIIntegrationsCurrent() map[string]interface{} {
 			TotalTokens:      entry.TotalTokens,
 			LastCapturedAt:   entry.LastCapturedAt.UTC().Format(time.RFC3339),
 		}
-		if entry.TotalCostUSD > 0 {
+		if entry.CostCount > 0 {
 			cost := entry.TotalCostUSD
 			model.TotalCostUSD = &cost
 		}
@@ -121,7 +121,7 @@ func (h *Handler) buildAPIIntegrationsCurrent() map[string]interface{} {
 		acc.CompletionTokens += entry.CompletionTokens
 		acc.TotalTokens += entry.TotalTokens
 		acc.LastCapturedAt = laterTimeString(acc.LastCapturedAt, entry.LastCapturedAt)
-		if entry.TotalCostUSD > 0 {
+		if entry.CostCount > 0 {
 			var current float64
 			if acc.TotalCostUSD != nil {
 				current = *acc.TotalCostUSD
@@ -136,7 +136,7 @@ func (h *Handler) buildAPIIntegrationsCurrent() map[string]interface{} {
 		prov.CompletionTokens += entry.CompletionTokens
 		prov.TotalTokens += entry.TotalTokens
 		prov.LastCapturedAt = laterTimeString(prov.LastCapturedAt, entry.LastCapturedAt)
-		if entry.TotalCostUSD > 0 {
+		if entry.CostCount > 0 {
 			var current float64
 			if prov.TotalCostUSD != nil {
 				current = *prov.TotalCostUSD
@@ -150,7 +150,7 @@ func (h *Handler) buildAPIIntegrationsCurrent() map[string]interface{} {
 		integrationState.CompletionTokens += entry.CompletionTokens
 		integrationState.TotalTokens += entry.TotalTokens
 		integrationState.TotalCostUSD += entry.TotalCostUSD
-		integrationState.HasCost = integrationState.HasCost || entry.TotalCostUSD > 0
+		integrationState.HasCost = integrationState.HasCost || entry.CostCount > 0
 		if entry.LastCapturedAt.After(integrationState.LastCapturedAt) {
 			integrationState.LastCapturedAt = entry.LastCapturedAt
 		}
@@ -228,7 +228,7 @@ func (h *Handler) buildAPIIntegrationsHistory(duration time.Duration) map[string
 			"completionTokens": row.CompletionTokens,
 			"totalTokens":      row.TotalTokens,
 		}
-		if row.TotalCostUSD > 0 {
+		if row.CostCount > 0 {
 			entry["totalCostUsd"] = row.TotalCostUSD
 		}
 		byIntegration[row.IntegrationName] = append(byIntegration[row.IntegrationName], entry)

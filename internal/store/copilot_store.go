@@ -41,8 +41,8 @@ func (s *Store) InsertCopilotSnapshot(snapshot *api.CopilotSnapshot) (int64, err
 	}
 
 	result, err := tx.Exec(
-		`INSERT INTO copilot_snapshots (captured_at, copilot_plan, reset_date, raw_json, quota_count) VALUES (?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO copilot_snapshots (account_id, captured_at, copilot_plan, reset_date, raw_json, quota_count) VALUES (?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.CopilotPlan,
 		resetDateVal,
 		snapshot.RawJSON,
@@ -86,7 +86,8 @@ func (s *Store) QueryLatestCopilot() (*api.CopilotSnapshot, error) {
 	var resetDate sql.NullString
 
 	err := s.db.QueryRow(
-		`SELECT id, captured_at, copilot_plan, reset_date, quota_count FROM copilot_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		`SELECT id, captured_at, copilot_plan, reset_date, quota_count FROM copilot_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(&snapshot.ID, &capturedAt, &copilotPlan, &resetDate, new(int))
 
 	if err == sql.ErrNoRows {
@@ -132,14 +133,14 @@ func (s *Store) QueryLatestCopilot() (*api.CopilotSnapshot, error) {
 // QueryCopilotRange returns Copilot snapshots within a time range.
 func (s *Store) QueryCopilotRange(start, end time.Time, limit ...int) ([]*api.CopilotSnapshot, error) {
 	query := `SELECT id, captured_at, copilot_plan, reset_date, quota_count FROM copilot_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+		WHERE captured_at BETWEEN ? AND ? AND account_id = ? ORDER BY captured_at ASC`
+	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, copilot_plan, reset_date, quota_count
 			FROM (
 				SELECT id, captured_at, copilot_plan, reset_date, quota_count
 				FROM copilot_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE captured_at BETWEEN ? AND ? AND account_id = ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -165,8 +166,8 @@ func (s *Store) QueryCopilotRange(start, end time.Time, limit ...int) ([]*api.Co
 // across the range (first and last always kept), with their quota values.
 func (s *Store) QueryCopilotRangeSampled(start, end time.Time) ([]*api.CopilotSnapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("copilot_snapshots", "id, captured_at, copilot_plan, reset_date, quota_count"),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		scopedWindowChartQuery("copilot_snapshots", "id, captured_at, copilot_plan, reset_date, quota_count"),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled copilot range: %w", err)
@@ -243,8 +244,8 @@ func (s *Store) CreateCopilotCycle(quotaName string, cycleStart time.Time, reset
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO copilot_reset_cycles (quota_name, cycle_start, reset_date) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetDateVal,
+		`INSERT INTO copilot_reset_cycles (account_id, quota_name, cycle_start, reset_date) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetDateVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create copilot cycle: %w", err)
@@ -261,8 +262,8 @@ func (s *Store) CreateCopilotCycle(quotaName string, cycleStart time.Time, reset
 func (s *Store) CloseCopilotCycle(quotaName string, cycleEnd time.Time, peakUsed, totalDelta int) error {
 	_, err := s.db.Exec(
 		`UPDATE copilot_reset_cycles SET cycle_end = ?, peak_used = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peakUsed, totalDelta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peakUsed, totalDelta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close copilot cycle: %w", err)
@@ -274,8 +275,8 @@ func (s *Store) CloseCopilotCycle(quotaName string, cycleEnd time.Time, peakUsed
 func (s *Store) UpdateCopilotCycle(quotaName string, peakUsed, totalDelta int) error {
 	_, err := s.db.Exec(
 		`UPDATE copilot_reset_cycles SET peak_used = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peakUsed, totalDelta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peakUsed, totalDelta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update copilot cycle: %w", err)
@@ -291,8 +292,8 @@ func (s *Store) QueryActiveCopilotCycle(quotaName string) (*CopilotResetCycle, e
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_name, cycle_start, cycle_end, reset_date, peak_used, total_delta
-		FROM copilot_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM copilot_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	).Scan(&cycle.ID, &cycle.QuotaName, &cycleStart, &cycleEnd, &resetDate, &cycle.PeakUsed, &cycle.TotalDelta)
 
 	if err == sql.ErrNoRows {
@@ -318,8 +319,8 @@ func (s *Store) QueryActiveCopilotCycle(quotaName string) (*CopilotResetCycle, e
 // QueryCopilotCycleHistory returns completed cycles for a Copilot quota with optional limit.
 func (s *Store) QueryCopilotCycleHistory(quotaName string, limit ...int) ([]*CopilotResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, reset_date, peak_used, total_delta
-		FROM copilot_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM copilot_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -360,9 +361,9 @@ func (s *Store) QueryCopilotCycleHistory(quotaName string, limit ...int) ([]*Cop
 func (s *Store) QueryCopilotCyclesSince(quotaName string, since time.Time) ([]*CopilotResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, reset_date, peak_used, total_delta
-		FROM copilot_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
+		FROM copilot_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
 		ORDER BY cycle_start DESC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, s.accountID, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query copilot cycles since: %w", err)
@@ -400,9 +401,9 @@ func (s *Store) QueryCopilotUsageSeries(quotaName string, since time.Time) ([]Co
 		`SELECT s.captured_at, qv.entitlement, qv.remaining, qv.unlimited
 		FROM copilot_quota_values qv
 		JOIN copilot_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.account_id = ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, since.UTC().Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query copilot usage series: %w", err)
@@ -479,11 +480,11 @@ func (s *Store) QueryCopilotCycleOverview(groupBy string, limit int) ([]CycleOve
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM copilot_snapshots s
 			JOIN copilot_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ? AND s.account_id = ?
 			ORDER BY (qv.entitlement - qv.remaining) DESC LIMIT 1`,
 			groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
-			endBoundary.Format(time.RFC3339Nano),
+			endBoundary.Format(time.RFC3339Nano), s.accountID,
 		).Scan(&snapshotID, &capturedAt)
 
 		if err == sql.ErrNoRows {
@@ -540,7 +541,7 @@ func (s *Store) QueryCopilotCycleOverview(groupBy string, limit int) ([]CycleOve
 // QueryAllCopilotQuotaNames returns all distinct quota names from Copilot quota values.
 func (s *Store) QueryAllCopilotQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM copilot_quota_values ORDER BY quota_name`,
+		`SELECT DISTINCT q.quota_name FROM copilot_quota_values q JOIN copilot_snapshots p ON p.id = q.snapshot_id WHERE p.account_id = ? ORDER BY q.quota_name`, s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query copilot quota names: %w", err)

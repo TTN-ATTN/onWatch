@@ -41,8 +41,8 @@ func (s *Store) InsertOpenCodeSnapshot(snapshot *api.OpenCodeSnapshot) (int64, e
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO opencode_snapshots (captured_at, raw_json, account_type, plan_name, quota_count) VALUES (?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO opencode_snapshots (account_id, captured_at, raw_json, account_type, plan_name, quota_count) VALUES (?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.RawJSON,
 		string(snapshot.AccountType),
 		snapshot.PlanName,
@@ -83,7 +83,8 @@ func (s *Store) QueryLatestOpenCode() (*api.OpenCodeSnapshot, error) {
 	var capturedAt, accountType, planName string
 
 	err := s.db.QueryRow(
-		`SELECT id, captured_at, account_type, plan_name, quota_count FROM opencode_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		`SELECT id, captured_at, account_type, plan_name, quota_count FROM opencode_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(&snapshot.ID, &capturedAt, &accountType, &planName, new(int))
 
 	if err == sql.ErrNoRows {
@@ -126,14 +127,14 @@ func (s *Store) QueryLatestOpenCode() (*api.OpenCodeSnapshot, error) {
 
 func (s *Store) QueryOpenCodeRange(start, end time.Time, limit ...int) ([]*api.OpenCodeSnapshot, error) {
 	query := `SELECT id, captured_at, account_type, plan_name, quota_count FROM opencode_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
+	args := []interface{}{s.accountID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, account_type, plan_name, quota_count
 			FROM (
 				SELECT id, captured_at, account_type, plan_name, quota_count
 				FROM opencode_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -146,8 +147,8 @@ func (s *Store) QueryOpenCodeRange(start, end time.Time, limit ...int) ([]*api.O
 
 // QueryOpenCodeChartRange samples the entire range with at most 200 snapshots.
 func (s *Store) QueryOpenCodeChartRange(start, end time.Time) ([]*api.OpenCodeSnapshot, error) {
-	query := windowChartQuery("opencode_snapshots", "id, captured_at, account_type, plan_name, quota_count")
-	return s.queryOpenCodeSnapshots(query, []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)})
+	query := scopedWindowChartQuery("opencode_snapshots", "id, captured_at, account_type, plan_name, quota_count")
+	return s.queryOpenCodeSnapshots(query, []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), s.accountID})
 }
 
 func (s *Store) queryOpenCodeSnapshots(query string, args []interface{}) ([]*api.OpenCodeSnapshot, error) {
@@ -225,8 +226,8 @@ func (s *Store) CreateOpenCodeCycle(quotaName string, cycleStart time.Time, rese
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO opencode_reset_cycles (quota_name, cycle_start, resets_at) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
+		`INSERT INTO opencode_reset_cycles (account_id, quota_name, cycle_start, resets_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create opencode cycle: %w", err)
@@ -242,8 +243,8 @@ func (s *Store) CreateOpenCodeCycle(quotaName string, cycleStart time.Time, rese
 func (s *Store) CloseOpenCodeCycle(quotaName string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE opencode_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close opencode cycle: %w", err)
@@ -254,8 +255,8 @@ func (s *Store) CloseOpenCodeCycle(quotaName string, cycleEnd time.Time, peak, d
 func (s *Store) UpdateOpenCodeCycle(quotaName string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE opencode_reset_cycles SET peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update opencode cycle: %w", err)
@@ -271,8 +272,8 @@ func (s *Store) UpdateOpenCodeCycleResetsAt(quotaName string, resetsAt *time.Tim
 	}
 	_, err := s.db.Exec(
 		`UPDATE opencode_reset_cycles SET resets_at = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		resetsAtVal, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		resetsAtVal, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update opencode cycle reset: %w", err)
@@ -284,8 +285,8 @@ func (s *Store) UpdateOpenCodeCycleResetsAt(quotaName string, resetsAt *time.Tim
 // meant for a cycle that has recorded no usage yet.
 func (s *Store) RestartOpenCodeCycle(quotaName string, cycleStart, resetsAt time.Time) error {
 	_, err := s.db.Exec(
-		`UPDATE opencode_reset_cycles SET cycle_start = ?, resets_at = ? WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleStart.Format(time.RFC3339Nano), resetsAt.Format(time.RFC3339Nano), quotaName,
+		`UPDATE opencode_reset_cycles SET cycle_start = ?, resets_at = ? WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleStart.Format(time.RFC3339Nano), resetsAt.Format(time.RFC3339Nano), quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set opencode cycle reset: %w", err)
@@ -300,8 +301,8 @@ func (s *Store) QueryActiveOpenCodeCycle(quotaName string) (*OpenCodeResetCycle,
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM opencode_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM opencode_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	).Scan(
 		&cycle.ID, &cycle.QuotaName, &cycleStart, &cycleEnd, &resetsAt,
 		&cycle.PeakUtilization, &cycle.TotalDelta,
@@ -329,8 +330,8 @@ func (s *Store) QueryActiveOpenCodeCycle(quotaName string) (*OpenCodeResetCycle,
 
 func (s *Store) QueryOpenCodeCycleHistory(quotaName string, limit ...int) ([]*OpenCodeResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM opencode_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM opencode_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -370,9 +371,9 @@ func (s *Store) QueryOpenCodeCycleHistory(quotaName string, limit ...int) ([]*Op
 func (s *Store) QueryOpenCodeCyclesSince(quotaName string, since time.Time) ([]*OpenCodeResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM opencode_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
+		FROM opencode_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
 		ORDER BY cycle_start DESC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, s.accountID, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query opencode cycles since: %w", err)
@@ -409,9 +410,9 @@ func (s *Store) QueryOpenCodeUtilizationSeries(quotaName string, since time.Time
 		`SELECT s.captured_at, qv.utilization
 		FROM opencode_quota_values qv
 		JOIN opencode_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		s.accountID, quotaName, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query utilization series: %w", err)
@@ -438,8 +439,8 @@ func (s *Store) QueryOpenCodeLatestPerQuota() ([]OpenCodeLatestQuota, error) {
 		       s.captured_at, s.account_type, s.plan_name
 		FROM opencode_quota_values qv
 		JOIN opencode_snapshots s ON s.id = qv.snapshot_id
-		WHERE s.id = (SELECT MAX(id) FROM opencode_snapshots)
-		ORDER BY qv.quota_name ASC`)
+		WHERE s.id = (SELECT MAX(id) FROM opencode_snapshots WHERE account_id = ?)
+		ORDER BY qv.quota_name ASC`, s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest per-quota: %w", err)
 	}
@@ -478,7 +479,8 @@ func (s *Store) QueryOpenCodeLatestPerQuota() ([]OpenCodeLatestQuota, error) {
 
 func (s *Store) QueryAllOpenCodeQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM opencode_reset_cycles ORDER BY quota_name`,
+		`SELECT DISTINCT quota_name FROM opencode_reset_cycles WHERE account_id = ? ORDER BY quota_name`,
+		s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query opencode quota names: %w", err)
@@ -549,9 +551,9 @@ func (s *Store) QueryOpenCodeCycleOverview(groupBy string, limit int) ([]CycleOv
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM opencode_snapshots s
 			JOIN opencode_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
 			ORDER BY qv.utilization DESC LIMIT 1`,
-			groupBy,
+			s.accountID, groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&snapshotID, &capturedAt)
@@ -596,6 +598,11 @@ func (s *Store) QueryOpenCodeCycleOverview(groupBy string, limit int) ([]CycleOv
 // Table and columns are internal constants, never request input.
 func windowChartQuery(table, columns string) string {
 	return windowChartQueryWhere(table, columns, "")
+}
+
+// scopedWindowChartQuery binds start, end, then account ID.
+func scopedWindowChartQuery(table, columns string) string {
+	return windowChartQueryWhere(table, columns, "account_id = ?")
 }
 
 // windowChartQueryWhere is windowChartQuery with an extra predicate appended

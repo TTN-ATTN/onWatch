@@ -13,6 +13,7 @@ import (
 	"time"
 
 	apiintegrations "github.com/onllm-dev/onwatch/v2/internal/api_integrations"
+	"github.com/onllm-dev/onwatch/v2/internal/pricing"
 	"github.com/onllm-dev/onwatch/v2/internal/store"
 )
 
@@ -34,6 +35,7 @@ type APIIntegrationsIngestAgent struct {
 	lastPrune      time.Time
 	scanPathCursor int
 	logger         *slog.Logger
+	pricing        *pricing.Catalog
 }
 
 // NewAPIIntegrationsIngestAgent creates a new API integrations file ingester.
@@ -56,6 +58,11 @@ func (a *APIIntegrationsIngestAgent) SetInterval(interval time.Duration) {
 	if interval > 0 {
 		a.interval = interval
 	}
+}
+
+// SetPricingCatalog supplies the native pricing snapshot before Run starts.
+func (a *APIIntegrationsIngestAgent) SetPricingCatalog(catalog *pricing.Catalog) {
+	a.pricing = catalog
 }
 
 // Run starts the periodic ingestion loop until context cancellation.
@@ -209,6 +216,15 @@ func (a *APIIntegrationsIngestAgent) scanFile(path string) error {
 				invalidAlertsSuppressed++
 			}
 			continue
+		}
+		if event.CostUSD == nil && a.pricing != nil {
+			if cost, err := a.pricing.Estimate(event.Provider, event.Model, pricing.Usage{
+				PromptTokens: int64(event.PromptTokens), CompletionTokens: int64(event.CompletionTokens),
+				CacheReadTokens: int64(event.CacheReadTokens), CacheWriteTokens: int64(event.CacheWriteTokens),
+			}); err == nil {
+				event.CostUSD = &cost
+				event.CostSource = "local_estimate"
+			}
 		}
 		if _, err := a.store.InsertAPIIntegrationUsageEvent(event); err != nil {
 			if errors.Is(err, store.ErrDuplicateAPIIntegrationUsageEvent) {

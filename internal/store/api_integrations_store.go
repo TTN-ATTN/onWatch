@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	apiintegrations "github.com/onllm-dev/onwatch/v2/internal/api_integrations"
@@ -27,6 +28,7 @@ type APIIntegrationUsageSummaryRow struct {
 	CompletionTokens int
 	TotalTokens      int
 	TotalCostUSD     float64
+	CostCount        int
 	LastCapturedAt   time.Time
 }
 
@@ -39,6 +41,7 @@ type APIIntegrationUsageBucketRow struct {
 	CompletionTokens int
 	TotalTokens      int
 	TotalCostUSD     float64
+	CostCount        int
 }
 
 // APIIntegrationIngestHealthRow contains persisted ingest state with last seen event time.
@@ -57,12 +60,35 @@ func (s *Store) InsertAPIIntegrationUsageEvent(event *apiintegrations.UsageEvent
 	if event == nil {
 		return 0, fmt.Errorf("API integration usage event is nil")
 	}
+	if event.CostUSD != nil && (*event.CostUSD < 0 || math.IsNaN(*event.CostUSD) || math.IsInf(*event.CostUSD, 0)) {
+		return 0, fmt.Errorf("cost_usd must be finite and nonnegative")
+	}
+	if event.PromptTokens < 0 || event.CompletionTokens < 0 || event.CacheReadTokens < 0 || event.CacheWriteTokens < 0 ||
+		event.CacheReadTokens > event.PromptTokens || event.CacheWriteTokens > event.PromptTokens-event.CacheReadTokens {
+		return 0, fmt.Errorf("invalid token counts")
+	}
+	if event.AccountID < 0 {
+		return 0, fmt.Errorf("invalid account ID")
+	}
+	var accountID int64
+	var lookupErr error
+	if event.AccountID != 0 {
+		lookupErr = s.db.QueryRow(`SELECT id FROM provider_accounts WHERE id = ? AND provider = ? AND deleted_at IS NULL`, event.AccountID, event.Provider).Scan(&accountID)
+		if lookupErr == sql.ErrNoRows {
+			return 0, fmt.Errorf("account does not belong to this provider")
+		}
+	} else {
+		lookupErr = s.db.QueryRow(`SELECT id FROM provider_accounts WHERE provider = ? AND name = ? AND deleted_at IS NULL`, event.Provider, event.Account).Scan(&accountID)
+	}
+	if lookupErr != nil && lookupErr != sql.ErrNoRows {
+		return 0, lookupErr
+	}
 	res, err := s.db.Exec(`
 		INSERT INTO api_integration_usage_events (
 			captured_at, integration_name, provider, account_name, model, request_id,
 			prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms,
-			metadata_json, source_path, fingerprint, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			metadata_json, source_path, fingerprint, created_at, account_id, cache_read_tokens, cache_write_tokens, cost_source
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		event.Timestamp.Format(time.RFC3339Nano),
 		event.Integration,
@@ -79,6 +105,7 @@ func (s *Store) InsertAPIIntegrationUsageEvent(event *apiintegrations.UsageEvent
 		event.SourcePath,
 		event.Fingerprint,
 		time.Now().UTC().Format(time.RFC3339Nano),
+		accountID, event.CacheReadTokens, event.CacheWriteTokens, event.CostSource,
 	)
 	if err != nil {
 		if isSQLiteUniqueConstraintError(err) {
@@ -98,7 +125,7 @@ func (s *Store) QueryAPIIntegrationUsageRange(start, end time.Time, limit ...int
 	query := `
 		SELECT captured_at, integration_name, provider, account_name, model, request_id,
 		       prompt_tokens, completion_tokens, total_tokens, cost_usd, latency_ms,
-		       metadata_json, source_path, fingerprint
+		       metadata_json, source_path, fingerprint, account_id, cache_read_tokens, cache_write_tokens, cost_source
 		FROM api_integration_usage_events
 		WHERE captured_at BETWEEN ? AND ?
 		ORDER BY captured_at ASC
@@ -136,6 +163,10 @@ func (s *Store) QueryAPIIntegrationUsageRange(start, end time.Time, limit ...int
 			&event.MetadataJSON,
 			&event.SourcePath,
 			&event.Fingerprint,
+			&event.AccountID,
+			&event.CacheReadTokens,
+			&event.CacheWriteTokens,
+			&event.CostSource,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan API integration usage event: %w", err)
 		}
@@ -177,7 +208,7 @@ func (s *Store) QueryAPIIntegrationUsageSummary() ([]APIIntegrationUsageSummaryR
 		       COALESCE(SUM(prompt_tokens), 0),
 		       COALESCE(SUM(completion_tokens), 0),
 		       COALESCE(SUM(total_tokens), 0),
-		       COALESCE(SUM(cost_usd), 0),
+		       COALESCE(SUM(cost_usd), 0), COUNT(cost_usd),
 		       MAX(captured_at)
 		FROM api_integration_usage_events
 		GROUP BY integration_name, provider, account_name, model
@@ -203,6 +234,7 @@ func (s *Store) QueryAPIIntegrationUsageSummary() ([]APIIntegrationUsageSummaryR
 			&row.CompletionTokens,
 			&row.TotalTokens,
 			&row.TotalCostUSD,
+			&row.CostCount,
 			&lastCapturedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan API integration usage summary: %w", err)
@@ -227,7 +259,7 @@ func (s *Store) QueryAPIIntegrationUsageBuckets(start, end time.Time, bucketSize
 		       COALESCE(SUM(prompt_tokens), 0),
 		       COALESCE(SUM(completion_tokens), 0),
 		       COALESCE(SUM(total_tokens), 0),
-		       COALESCE(SUM(cost_usd), 0)
+		       COALESCE(SUM(cost_usd), 0), COUNT(cost_usd)
 		FROM api_integration_usage_events
 		WHERE captured_at BETWEEN ? AND ?
 		GROUP BY integration_name, 2
@@ -251,6 +283,7 @@ func (s *Store) QueryAPIIntegrationUsageBuckets(start, end time.Time, bucketSize
 			&row.CompletionTokens,
 			&row.TotalTokens,
 			&row.TotalCostUSD,
+			&row.CostCount,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan API integration usage bucket: %w", err)
 		}

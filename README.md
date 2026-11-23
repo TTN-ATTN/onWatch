@@ -194,6 +194,7 @@ It is a thin client: it needs the onWatch daemon running (steps above) and finds
 - **Zenmux** - Subscription Flow quotas and personal account model usage aggregates from read-only Management APIs. Model history is aggregated, not individual request logs. Monthly quota usage and reset are not published. See [Zenmux Setup](docs/ZENMUX_SETUP.md).
 - **Alibaba Token Plan** -- Alibaba Cloud Model Studio Token Plan (Personal) 5-hour, weekly and monthly usage windows with live reset countdowns, cycle history and burn-rate insights. There is no API key: onWatch reads the console with your browser session cookies (`ALIBABA_COOKIES` / `ALIBABA_COOKIES_FILE`, or add accounts in the dashboard). Multi-account. See [Alibaba Setup](docs/ALIBABA_SETUP.md).
 - **API Integrations** -- Local JSONL ingestion for custom API-driven workflows and automations. Track per-integration token volume, request counts, recent activity, costs, trends, and accumulated usage across separate API keys and providers.
+- **Accounts & Costs** (`/accounts`) -- Manage any number of accounts per provider (two Z.ai keys, a personal and a work OpenAI key, ...), each with its own credentials, polling, history and pause switch. Credentials are encrypted in the database and never shown again after saving. Pay-as-you-go accounts show provider-reported spend where the provider has a billing API (OpenAI and Anthropic organization costs with an admin key, OpenRouter key usage, OpenAI-compatible legacy billing endpoints), otherwise an estimate from observed tokens priced by onWatch's own built-in rates. If the omp coding agent is installed, its API keys and logins are offered as read-only accounts automatically; onWatch works the same without it.
 - **All** -- Side-by-side view of all configured providers
 - **Prometheus metrics endpoint (Beta)** -- Exposes `/metrics` for Prometheus/Grafana/Alertmanager integrations, with optional bearer token protection via `ONWATCH_METRICS_TOKEN`
 - **PWA installable** -- Install onWatch from your browser for a native app experience (Beta)
@@ -412,6 +413,9 @@ Additional environment variables:
 | `ONWATCH_API_INTEGRATIONS_ENABLED` | Enable or disable API Integrations ingestion (default: `true`) |
 | `ONWATCH_API_INTEGRATIONS_DIR`     | Directory onWatch tails for API Integrations JSONL events |
 | `ONWATCH_API_INTEGRATIONS_RETENTION` | How long API Integrations rows are kept in SQLite (default: `1440h` = 60 days, `0` disables pruning) |
+| `ONWATCH_PRICING_FILE`   | Optional JSON array of exact `provider`/`model` USD-per-million-token rates that add to or override the built-in pricing snapshot |
+| `ONWATCH_OMP_ENABLED`    | Optional read-only credential discovery from omp (default: `true`). onWatch never needs omp; set `false` to skip it |
+| `ONWATCH_OMP_DIR`        | omp agent directory to read credentials from (default: `~/.omp/agent`) |
 
 CLI flags override environment variables.
 
@@ -419,12 +423,16 @@ CLI flags override environment variables.
 
 ## API Endpoints
 
-All endpoints require authentication (session cookie or Basic Auth). Append `?provider=synthetic|zai|anthropic|codex|copilot|minimax|gemini|cursor|antigravity|both` to select the provider.
+All endpoints require authentication (session cookie or Basic Auth). Append `?provider=synthetic|zai|anthropic|codex|copilot|minimax|gemini|cursor|antigravity|both` to select the provider, and `&account=<id>` to select one account from **Accounts & Costs**.
 
 | Endpoint                        | Method      | Description                                    |
 | ------------------------------- | ----------- | ---------------------------------------------- |
 | `/`                             | GET         | Dashboard                                      |
 | `/settings`                     | GET         | Settings page                                  |
+| `/accounts`                     | GET         | Accounts & Costs page                          |
+| `/api/accounts`                 | GET/POST/PUT/DELETE | List, add, edit/pause, or remove accounts (credentials are write-only) |
+| `/api/accounts/discover`        | POST        | Rescan optional omp credentials                |
+| `/api/accounts/usage?account=<id>&range=30d` | GET | Account spend, daily and per-model usage   |
 | `/login`                        | GET/POST    | Login page                                     |
 | `/logout`                       | GET         | Clear session                                  |
 | `/api/current`                  | GET         | Latest snapshot with summaries                 |

@@ -283,9 +283,9 @@ func TestMistralHotQueriesAvoidFullSort(t *testing.T) {
 		sql  string
 		args []any
 	}{
-		"latest snapshot": {mistralLatestSnapshotSQL, nil},
-		"latest billing":  {mistralLatestBillingSQL, []any{"id"}},
-		"history window":  {mistralHistoryWindowSQL, []any{now.Add(-time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), 200}},
+		"latest snapshot": {mistralLatestSnapshotSQL, []any{int64(0), "mistral_identity"}},
+		"latest billing":  {mistralLatestBillingSQL, []any{int64(0), "id"}},
+		"history window":  {mistralHistoryWindowSQL, []any{int64(0), "mistral_identity", now.Add(-time.Hour).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), 200}},
 	} {
 		rows, e := s.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+c.sql, c.args...)
 		if e != nil {

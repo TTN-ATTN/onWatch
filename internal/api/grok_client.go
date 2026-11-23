@@ -39,8 +39,9 @@ type GrokClient struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 
-	token   string
-	tokenMu sync.RWMutex
+	token               string
+	tokenMu             sync.RWMutex
+	explicitCredentials bool
 
 	// Test hooks
 	rpcBinaryOverride string
@@ -49,6 +50,12 @@ type GrokClient struct {
 
 // GrokClientOption configures the client (primarily for tests).
 type GrokClientOption func(*GrokClient)
+
+// WithGrokExplicitCredentials confines polling to the supplied bearer and web
+// billing API. It never reads local auth, invokes the CLI, or imports sessions.
+func WithGrokExplicitCredentials() GrokClientOption {
+	return func(c *GrokClient) { c.explicitCredentials = true }
+}
 
 // WithGrokBinary overrides the executable name/path for the RPC path (testing).
 func WithGrokBinary(bin string) GrokClientOption {
@@ -107,6 +114,12 @@ func (c *GrokClient) SetToken(token string) {
 // consults the on-disk auth.json for the freshest identity fields and a possible
 // updated bearer. File is authoritative per the spec.
 func (c *GrokClient) resolveCredentials() *GrokCredentials {
+	if c.explicitCredentials {
+		if tok := c.getToken(); tok != "" {
+			return &GrokCredentials{AccessToken: tok}
+		}
+		return nil
+	}
 	// Always try file first for complete identity + current key.
 	if creds := DetectGrokCredentials(c.logger); creds != nil && creds.AccessToken != "" {
 		return creds
@@ -131,10 +144,12 @@ func (c *GrokClient) FetchSnapshot(ctx context.Context) (*GrokSnapshot, error) {
 	var web *GrokWebBillingSnapshot
 
 	// 1. Try RPC (best effort; often "method not found" today)
-	if b, err := c.tryRPC(ctx, creds); err == nil && b != nil {
-		billing = b
-	} else if err != nil {
-		c.logger.Debug("grok rpc attempt failed or not available", "error", err)
+	if !c.explicitCredentials {
+		if b, err := c.tryRPC(ctx, creds); err == nil && b != nil {
+			billing = b
+		} else if err != nil {
+			c.logger.Debug("grok rpc attempt failed or not available", "error", err)
+		}
 	}
 
 	// 2. Web gRPC-web bearer probe (primary reliable path for daemon)
@@ -163,8 +178,10 @@ func (c *GrokClient) FetchSnapshot(ctx context.Context) (*GrokSnapshot, error) {
 	}
 
 	// Attach informational local sessions (never fails the fetch)
-	if ls := c.scanLocalSessions(); ls != nil && (ls.SessionCount > 0 || ls.TotalTokens > 0) {
-		snap.LocalSessions = ls
+	if !c.explicitCredentials {
+		if ls := c.scanLocalSessions(); ls != nil && (ls.SessionCount > 0 || ls.TotalTokens > 0) {
+			snap.LocalSessions = ls
+		}
 	}
 
 	if snap.RawJSON == "" {

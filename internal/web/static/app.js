@@ -102,6 +102,11 @@ function providerParam() {
     param += minimaxAccountParam();
   } else if (provider === 'alibaba') {
     param += alibabaAccountParam();
+  } else {
+    // Managed accounts for other providers: the server renders this selector
+    // with the scoped account already chosen, so every request stays scoped.
+    const select = document.getElementById('provider-account-select');
+    if (select && select.value) param += `&account=${encodeURIComponent(select.value)}`;
   }
   return param;
 }
@@ -14615,6 +14620,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   initLayoutToggle();
   await initTimezoneBadge();
   setupProviderSelector();
+  const providerAccountSelect = document.getElementById('provider-account-select');
+  if (providerAccountSelect) {
+    providerAccountSelect.addEventListener('change', () => {
+      const params = new URLSearchParams(window.location.search);
+      params.set('provider', getCurrentProvider());
+      params.set('account', providerAccountSelect.value);
+      window.location.href = `${BASE_PATH}/?${params.toString()}`;
+    });
+  }
   setupZenmuxUsage();
   setupRangeSelector();
   setupAPIIntegrationsMetricSelector();

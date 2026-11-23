@@ -21,11 +21,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/onllm-dev/onwatch/v2/internal/accounts"
 	"github.com/onllm-dev/onwatch/v2/internal/agent"
 	"github.com/onllm-dev/onwatch/v2/internal/api"
 	"github.com/onllm-dev/onwatch/v2/internal/config"
 	"github.com/onllm-dev/onwatch/v2/internal/menubar"
 	"github.com/onllm-dev/onwatch/v2/internal/notify"
+	"github.com/onllm-dev/onwatch/v2/internal/pricing"
 	"github.com/onllm-dev/onwatch/v2/internal/service"
 	"github.com/onllm-dev/onwatch/v2/internal/store"
 	"github.com/onllm-dev/onwatch/v2/internal/tracker"
@@ -1603,9 +1605,20 @@ func run() error {
 		commandCodeAg = agent.NewCommandCodeAgent(commandCodeClient, db, commandCodeTr, cfg.PollInterval, logger, commandCodeSm)
 	}
 
+	// Fallback cost estimates use onWatch's own pricing snapshot plus optional
+	// overrides, so costs never depend on omp being installed.
+	pricingCatalog, err := pricing.NewCatalog(cfg.PricingFile)
+	if err != nil {
+		return fmt.Errorf("failed to load ONWATCH_PRICING_FILE: %w", err)
+	}
 	var apiIntegrationsAg *agent.APIIntegrationsIngestAgent
 	if cfg.APIIntegrationsEnabled {
 		apiIntegrationsAg = agent.NewAPIIntegrationsIngestAgent(db, cfg.APIIntegrationsDir, cfg.APIIntegrationsRetention, logger)
+		apiIntegrationsAg.SetPricingCatalog(pricingCatalog)
+	}
+	accountsSvc, err := accounts.New(db, cfg, pricingCatalog, deriveEncryptionKey(cfg.AdminPassHash), logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize account management: %w", err)
 	}
 
 	// Create notification engine
@@ -1674,7 +1687,12 @@ func run() error {
 	}
 
 	// Wire polling checks - agents skip poll when telemetry disabled
+	// Legacy single-account agents respect the matching account row: paused,
+	// switched to cost mode, deleted, or superseded by managed credentials.
 	isPollingEnabled := func(providerKey string) bool {
+		if !accountsSvc.ShouldPollLegacy(providerKey, 0) {
+			return false
+		}
 		v, err := db.GetSetting("provider_visibility")
 		if err != nil || v == "" {
 			return true // default: polling enabled
@@ -1707,6 +1725,9 @@ func run() error {
 		// Per-account polling check for Codex multi-account support
 		// Uses flat keys like "codex:1", "codex:2" for per-account settings
 		codexMgr.SetAccountPollingCheck(func(accountID int64) bool {
+			if !accountsSvc.ShouldPollLegacy("codex", accountID) {
+				return false
+			}
 			v, err := db.GetSetting("provider_visibility")
 			if err != nil || v == "" {
 				return true // default: polling enabled
@@ -1785,6 +1806,9 @@ func run() error {
 	if minimaxMgr != nil {
 		minimaxMgr.SetPollingCheck(func() bool { return isPollingEnabled("minimax") })
 		minimaxMgr.SetAccountPollingCheck(func(accountID int64) bool {
+			if !accountsSvc.ShouldPollLegacy("minimax", accountID) {
+				return false
+			}
 			v, err := db.GetSetting("provider_visibility")
 			if err != nil || v == "" {
 				return true
@@ -1814,6 +1838,9 @@ func run() error {
 	if alibabaMgr != nil {
 		alibabaMgr.SetPollingCheck(func() bool { return isPollingEnabled("alibaba") })
 		alibabaMgr.SetAccountPollingCheck(func(accountID int64) bool {
+			if !accountsSvc.ShouldPollLegacy("alibaba", accountID) {
+				return false
+			}
 			v, err := db.GetSetting("provider_visibility")
 			if err != nil || v == "" {
 				return true
@@ -2138,7 +2165,9 @@ func run() error {
 	if apiIntegrationsAg != nil {
 		agentMgr.RegisterFactory("api_integrations", func() (agent.AgentRunner, error) { return apiIntegrationsAg, nil })
 	}
+	agentMgr.RegisterFactory("accounts", func() (agent.AgentRunner, error) { return accountsSvc, nil })
 	handler.SetAgentManager(agentMgr)
+	handler.SetAccountsService(accountsSvc)
 	if minimaxMgr != nil {
 		handler.SetMiniMaxAgentManager(minimaxMgr)
 	}
@@ -2198,6 +2227,9 @@ func run() error {
 		if err := agentMgr.Start("api_integrations"); err == nil {
 			startedAny = true
 		}
+	}
+	if err := agentMgr.Start("accounts"); err == nil {
+		startedAny = true
 	}
 	if !startedAny {
 		logger.Info("No agents configured")

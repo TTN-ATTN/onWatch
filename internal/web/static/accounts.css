@@ -1,0 +1,48 @@
+.accounts-page { max-width: var(--layout-max-width); margin: 0 auto; padding: 28px 24px 48px; }
+.accounts-page [hidden] { display: none !important; }
+.accounts-header, .accounts-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.accounts-header { justify-content: space-between; margin-bottom: 24px; }
+.accounts-page h1 { font-size: 1.8rem; margin: 8px 0; }
+.accounts-page h2 { font-size: 1.2rem; margin-bottom: 16px; }
+.accounts-page h3 { font-size: 1rem; margin: 16px 0 8px; }
+.accounts-page p { margin: 10px 0; overflow-wrap: anywhere; }
+.accounts-page a { color: var(--accent-teal-text); text-decoration: underline; text-underline-offset: 3px; }
+.accounts-page button, .accounts-page input, .accounts-page select { font: inherit; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); min-height: 42px; padding: 9px 12px; }
+.accounts-page button { cursor: pointer; font-weight: 500; }
+.accounts-page button:hover:not(:disabled) { background: var(--surface-card-alt); border-color: var(--accent-teal); }
+.accounts-page button:disabled { opacity: .55; cursor: not-allowed; }
+.accounts-page :focus-visible { outline: 3px solid var(--border-focus); outline-offset: 3px; }
+.accounts-page .accounts-primary { background: var(--accent-teal); color: var(--text-inverse); border-color: var(--accent-teal); }
+.accounts-page .accounts-primary:hover:not(:disabled) { background: var(--accent-teal-text); color: var(--surface-card); }
+.accounts-page .accounts-danger { color: var(--status-danger-text); }
+.accounts-muted, .accounts-header p { color: var(--text-secondary); font-size: .9rem; }
+.accounts-error { padding: 12px; border: 1px solid var(--status-danger); border-radius: var(--radius-sm); background: var(--status-danger-bg); color: var(--status-danger-text); }
+.accounts-card { background: var(--surface-card); padding: 24px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); min-width: 0; }
+#accounts-editor { margin: 20px 0; }
+.accounts-layout { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); gap: var(--layout-gap); margin-top: 20px; align-items: start; }
+.accounts-list { display: grid; gap: 10px; }
+.accounts-list button { text-align: left; width: 100%; overflow-wrap: anywhere; }
+.accounts-list button[aria-pressed="true"] { border-color: var(--accent-teal); background: var(--accent-teal-muted); }
+.accounts-list button span { display: block; font-size: .85rem; color: var(--text-secondary); font-weight: 400; margin-top: 4px; }
+.accounts-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.accounts-page label { display: flex; flex-direction: column; gap: 6px; font-size: .9rem; font-weight: 500; }
+.accounts-page input, .accounts-page select { width: 100%; min-width: 0; }
+.accounts-page .accounts-wide { grid-column: 1 / -1; }
+.accounts-page fieldset { border: 1px solid var(--border-default); border-radius: var(--radius-sm); margin: 16px 0; padding: 16px; min-width: 0; }
+.accounts-page legend { padding: 0 6px; }
+.accounts-page .accounts-checkbox { flex-direction: row; align-items: center; margin: 16px 0; }
+.accounts-checkbox input { width: 18px; min-height: 18px; height: 18px; }
+.accounts-usage-controls { margin: 20px 0; align-items: end; }
+.accounts-amount { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.accounts-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 16px 0; font-size: .9rem; }
+.accounts-facts dt { color: var(--text-secondary); }
+.accounts-facts dd { margin: 0; overflow-wrap: anywhere; }
+.accounts-quota-data { font: .85rem var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-inset); padding: 16px; border-radius: var(--radius-sm); max-height: 400px; overflow: auto; }
+.accounts-table-wrap { overflow-x: auto; margin-top: 24px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
+.accounts-page table { border-collapse: collapse; width: 100%; font-size: .85rem; text-align: left; font-variant-numeric: tabular-nums; }
+.accounts-page caption { text-align: left; padding: 12px; font-weight: 700; }
+.accounts-page th, .accounts-page td { padding: 10px 12px; border-top: 1px solid var(--border-default); vertical-align: top; }
+.accounts-page th { background: var(--surface-card-alt); white-space: nowrap; }
+.accounts-page td:first-child { overflow-wrap: anywhere; min-width: 110px; }
+.accounts-page td:not(:first-child) { white-space: nowrap; }
+@media (max-width: 760px) { .accounts-page { padding: 20px 14px; } .accounts-layout, .accounts-fields { grid-template-columns: minmax(0, 1fr); } .accounts-card { padding: 18px; } .accounts-facts { grid-template-columns: minmax(0, 1fr); gap: 3px; } .accounts-facts dd { margin-bottom: 10px; } }

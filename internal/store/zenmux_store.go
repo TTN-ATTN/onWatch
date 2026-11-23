@@ -22,7 +22,7 @@ func (s *Store) InsertZenmuxSnapshot(snapshot *api.ZenmuxSnapshot) (int64, error
 	if err != nil {
 		return 0, err
 	}
-	result, err := s.db.Exec(`INSERT INTO zenmux_snapshots (captured_at, payload) VALUES (?, ?)`, snapshot.CapturedAt.UTC().Format(zenmuxTimeLayout), string(body))
+	result, err := s.db.Exec(`INSERT INTO zenmux_snapshots (account_id, captured_at, payload) VALUES (?, ?, ?)`, s.accountID, snapshot.CapturedAt.UTC().Format(zenmuxTimeLayout), string(body))
 	if err != nil {
 		return 0, fmt.Errorf("insert zenmux snapshot: %w", err)
 	}
@@ -44,7 +44,7 @@ func scanZenmuxSnapshot(scanner interface{ Scan(...interface{}) error }) (*api.Z
 }
 
 func (s *Store) QueryLatestZenmux() (*api.ZenmuxSnapshot, error) {
-	snap, err := scanZenmuxSnapshot(s.db.QueryRow(`SELECT id, payload FROM zenmux_snapshots ORDER BY captured_at DESC, id DESC LIMIT 1`))
+	snap, err := scanZenmuxSnapshot(s.db.QueryRow(`SELECT id, payload FROM zenmux_snapshots WHERE account_id = ? ORDER BY captured_at DESC, id DESC LIMIT 1`, s.accountID))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -53,7 +53,7 @@ func (s *Store) QueryLatestZenmux() (*api.ZenmuxSnapshot, error) {
 
 // QueryRecentZenmux returns a bounded, unsampled sequence for local rate estimates.
 func (s *Store) QueryRecentZenmux(ctx context.Context, since time.Time) ([]*api.ZenmuxSnapshot, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, payload FROM zenmux_snapshots WHERE captured_at >= ? ORDER BY captured_at DESC, id DESC LIMIT 201`, since.UTC().Format(zenmuxTimeLayout))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, payload FROM zenmux_snapshots WHERE account_id = ? AND captured_at >= ? ORDER BY captured_at DESC, id DESC LIMIT 201`, s.accountID, since.UTC().Format(zenmuxTimeLayout))
 	if err != nil {
 		return nil, fmt.Errorf("query zenmux estimates: %w", err)
 	}
@@ -75,7 +75,7 @@ func (s *Store) QueryRecentZenmux(ctx context.Context, since time.Time) ([]*api.
 // QueryZenmuxChartRange samples the whole range, including the newest value,
 // at no more than 200 snapshots, matching other provider charts.
 func (s *Store) QueryZenmuxChartRange(start, end time.Time) ([]*api.ZenmuxSnapshot, error) {
-	rows, err := s.db.Query(windowChartQuery("zenmux_snapshots", "id, payload"), start.UTC().Format(zenmuxTimeLayout), end.UTC().Format(zenmuxTimeLayout))
+	rows, err := s.db.Query(scopedWindowChartQuery("zenmux_snapshots", "id, payload"), start.UTC().Format(zenmuxTimeLayout), end.UTC().Format(zenmuxTimeLayout), s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("query zenmux history: %w", err)
 	}

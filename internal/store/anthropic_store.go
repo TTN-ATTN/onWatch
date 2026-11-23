@@ -30,8 +30,8 @@ func (s *Store) InsertAnthropicSnapshot(snapshot *api.AnthropicSnapshot) (int64,
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO anthropic_snapshots (captured_at, raw_json, quota_count) VALUES (?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO anthropic_snapshots (account_id, captured_at, raw_json, quota_count) VALUES (?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.RawJSON,
 		len(snapshot.Quotas),
 	)
@@ -71,7 +71,8 @@ func (s *Store) QueryLatestAnthropic() (*api.AnthropicSnapshot, error) {
 	var capturedAt string
 
 	err := s.db.QueryRow(
-		`SELECT id, captured_at, quota_count FROM anthropic_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		`SELECT id, captured_at, quota_count FROM anthropic_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(&snapshot.ID, &capturedAt, new(int))
 
 	if err == sql.ErrNoRows {
@@ -116,14 +117,14 @@ func (s *Store) QueryLatestAnthropic() (*api.AnthropicSnapshot, error) {
 // QueryAnthropicRange returns Anthropic snapshots within a time range with optional limit.
 func (s *Store) QueryAnthropicRange(start, end time.Time, limit ...int) ([]*api.AnthropicSnapshot, error) {
 	query := `SELECT id, captured_at, quota_count FROM anthropic_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano)}
+		WHERE captured_at BETWEEN ? AND ? AND account_id = ? ORDER BY captured_at ASC`
+	args := []interface{}{start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, quota_count
 			FROM (
 				SELECT id, captured_at, quota_count
 				FROM anthropic_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE captured_at BETWEEN ? AND ? AND account_id = ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -151,8 +152,8 @@ func (s *Store) QueryAnthropicRange(start, end time.Time, limit ...int) ([]*api.
 // of a 30-day range into memory.
 func (s *Store) QueryAnthropicRangeSampled(start, end time.Time) ([]*api.AnthropicSnapshot, error) {
 	rows, err := s.db.Query(
-		windowChartQuery("anthropic_snapshots", "id, captured_at, quota_count"),
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		scopedWindowChartQuery("anthropic_snapshots", "id, captured_at, quota_count"),
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query sampled anthropic range: %w", err)
@@ -226,8 +227,8 @@ func (s *Store) attachAnthropicQuotas(snapshots []*api.AnthropicSnapshot) error 
 func (s *Store) QueryAnthropicRangeStats(start, end time.Time) (count int, first, last time.Time, err error) {
 	var firstRaw, lastRaw sql.NullString
 	err = s.db.QueryRow(
-		`SELECT COUNT(*), MIN(captured_at), MAX(captured_at) FROM anthropic_snapshots WHERE captured_at BETWEEN ? AND ?`,
-		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano),
+		`SELECT COUNT(*), MIN(captured_at), MAX(captured_at) FROM anthropic_snapshots WHERE captured_at BETWEEN ? AND ? AND account_id = ?`,
+		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano), s.accountID,
 	).Scan(&count, &firstRaw, &lastRaw)
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, fmt.Errorf("failed to query anthropic range stats: %w", err)
@@ -249,8 +250,8 @@ func (s *Store) CreateAnthropicCycle(quotaName string, cycleStart time.Time, res
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO anthropic_reset_cycles (quota_name, cycle_start, resets_at) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
+		`INSERT INTO anthropic_reset_cycles (account_id, quota_name, cycle_start, resets_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create anthropic cycle: %w", err)
@@ -267,8 +268,8 @@ func (s *Store) CreateAnthropicCycle(quotaName string, cycleStart time.Time, res
 func (s *Store) CloseAnthropicCycle(quotaName string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE anthropic_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close anthropic cycle: %w", err)
@@ -280,8 +281,8 @@ func (s *Store) CloseAnthropicCycle(quotaName string, cycleEnd time.Time, peak, 
 func (s *Store) UpdateAnthropicCycle(quotaName string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE anthropic_reset_cycles SET peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update anthropic cycle: %w", err)
@@ -297,8 +298,8 @@ func (s *Store) QueryActiveAnthropicCycle(quotaName string) (*AnthropicResetCycl
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM anthropic_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM anthropic_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	).Scan(
 		&cycle.ID, &cycle.QuotaName, &cycleStart, &cycleEnd, &resetsAt,
 		&cycle.PeakUtilization, &cycle.TotalDelta,
@@ -327,8 +328,8 @@ func (s *Store) QueryActiveAnthropicCycle(quotaName string) (*AnthropicResetCycl
 // QueryAnthropicCycleHistory returns completed cycles for an Anthropic quota with optional limit.
 func (s *Store) QueryAnthropicCycleHistory(quotaName string, limit ...int) ([]*AnthropicResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM anthropic_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM anthropic_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -369,9 +370,9 @@ func (s *Store) QueryAnthropicCycleHistory(quotaName string, limit ...int) ([]*A
 func (s *Store) QueryAnthropicCyclesSince(quotaName string, since time.Time) ([]*AnthropicResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM anthropic_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
+		FROM anthropic_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
 		ORDER BY cycle_start DESC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, s.accountID, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query anthropic cycles since: %w", err)
@@ -416,9 +417,9 @@ func (s *Store) QueryAnthropicUtilizationSeries(quotaName string, since time.Tim
 		`SELECT s.captured_at, qv.utilization
 		FROM anthropic_quota_values qv
 		JOIN anthropic_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.account_id = ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, since.UTC().Format(time.RFC3339Nano), s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query utilization series: %w", err)
@@ -499,11 +500,11 @@ func (s *Store) QueryAnthropicCycleOverview(groupBy string, limit int) ([]CycleO
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM anthropic_snapshots s
 			JOIN anthropic_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ? AND s.account_id = ?
 			ORDER BY qv.utilization DESC LIMIT 1`,
 			groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
-			endBoundary.Format(time.RFC3339Nano),
+			endBoundary.Format(time.RFC3339Nano), s.accountID,
 		).Scan(&snapshotID, &capturedAt)
 
 		if err == sql.ErrNoRows {
@@ -523,10 +524,10 @@ func (s *Store) QueryAnthropicCycleOverview(groupBy string, limit int) ([]CycleO
 		var firstSnapshotID int64
 		err = s.db.QueryRow(
 			`SELECT id FROM anthropic_snapshots
-			WHERE captured_at >= ? AND captured_at < ?
+			WHERE captured_at >= ? AND captured_at < ? AND account_id = ?
 			ORDER BY captured_at ASC LIMIT 1`,
 			c.CycleStart.Format(time.RFC3339Nano),
-			endBoundary.Format(time.RFC3339Nano),
+			endBoundary.Format(time.RFC3339Nano), s.accountID,
 		).Scan(&firstSnapshotID)
 		if err == nil {
 			firstIDs = append(firstIDs, firstSnapshotID)
@@ -579,8 +580,8 @@ func (s *Store) QueryAnthropicLatestPerQuota() ([]AnthropicLatestQuota, error) {
 		SELECT qv.quota_name, qv.utilization, qv.resets_at, s.captured_at, s.raw_json
 		FROM anthropic_quota_values qv
 		JOIN anthropic_snapshots s ON s.id = qv.snapshot_id
-		WHERE s.id >= (SELECT MAX(id) - 50 FROM anthropic_snapshots)
-		ORDER BY s.captured_at DESC`)
+		WHERE s.id IN (SELECT id FROM anthropic_snapshots WHERE account_id = ? ORDER BY id DESC LIMIT 50)
+		ORDER BY s.captured_at DESC`, s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest per-quota: %w", err)
 	}
@@ -640,8 +641,8 @@ func (s *Store) LastAnthropicAPISnapshot() (time.Time, bool, error) {
 	var capturedAt string
 	err := s.db.QueryRow(
 		`SELECT captured_at FROM anthropic_snapshots
-		 WHERE raw_json NOT LIKE '%"_source":"statusline"%'
-		 ORDER BY id DESC LIMIT 1`,
+		 WHERE account_id = ? AND raw_json NOT LIKE '%"_source":"statusline"%'
+		 ORDER BY id DESC LIMIT 1`, s.accountID,
 	).Scan(&capturedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
@@ -659,7 +660,7 @@ func (s *Store) LastAnthropicAPISnapshot() (time.Time, bool, error) {
 // QueryAllAnthropicQuotaNames returns all distinct quota names from Anthropic reset cycles.
 func (s *Store) QueryAllAnthropicQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM anthropic_reset_cycles ORDER BY quota_name`,
+		`SELECT DISTINCT quota_name FROM anthropic_reset_cycles WHERE account_id = ? ORDER BY quota_name`, s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query anthropic quota names: %w", err)

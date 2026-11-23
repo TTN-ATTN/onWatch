@@ -38,8 +38,8 @@ func (s *Store) InsertOllamaSnapshot(snapshot *api.OllamaSnapshot) (int64, error
 	defer tx.Rollback()
 
 	result, err := tx.Exec(
-		`INSERT INTO ollama_snapshots (captured_at, raw_json, plan, account_name, account_email, monthly_used, monthly_limit, extra_cost, quota_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		`INSERT INTO ollama_snapshots (account_id, captured_at, raw_json, plan, account_name, account_email, monthly_used, monthly_limit, extra_cost, quota_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.RawJSON,
 		snapshot.Plan,
 		snapshot.AccountName,
@@ -93,7 +93,8 @@ func (s *Store) QueryLatestOllama() (*api.OllamaSnapshot, error) {
 	var capturedAt string
 
 	err := s.db.QueryRow(
-		`SELECT id, captured_at, plan, account_name, account_email, monthly_used, monthly_limit, extra_cost FROM ollama_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		`SELECT id, captured_at, plan, account_name, account_email, monthly_used, monthly_limit, extra_cost FROM ollama_snapshots WHERE account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(&snapshot.ID, &capturedAt, &snapshot.Plan, &snapshot.AccountName, &snapshot.AccountEmail, &snapshot.MonthlyUsedUSD, &snapshot.MonthlyLimitUSD, &snapshot.ExtraCostUSD)
 
 	if err == sql.ErrNoRows {
@@ -137,14 +138,14 @@ func (s *Store) QueryLatestOllama() (*api.OllamaSnapshot, error) {
 
 func (s *Store) QueryOllamaRange(start, end time.Time, limit ...int) ([]*api.OllamaSnapshot, error) {
 	query := `SELECT id, captured_at, plan, account_name, monthly_used, monthly_limit, extra_cost FROM ollama_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
+		WHERE account_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
+	args := []interface{}{s.accountID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT id, captured_at, plan, account_name, monthly_used, monthly_limit, extra_cost
 			FROM (
 				SELECT id, captured_at, plan, account_name, monthly_used, monthly_limit, extra_cost
 				FROM ollama_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -224,8 +225,8 @@ func (s *Store) CreateOllamaCycle(quotaName string, cycleStart time.Time, resets
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO ollama_reset_cycles (quota_name, cycle_start, resets_at) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
+		`INSERT INTO ollama_reset_cycles (account_id, quota_name, cycle_start, resets_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create ollama cycle: %w", err)
@@ -241,8 +242,8 @@ func (s *Store) CreateOllamaCycle(quotaName string, cycleStart time.Time, resets
 func (s *Store) CloseOllamaCycle(quotaName string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE ollama_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close ollama cycle: %w", err)
@@ -253,8 +254,8 @@ func (s *Store) CloseOllamaCycle(quotaName string, cycleEnd time.Time, peak, del
 func (s *Store) UpdateOllamaCycle(quotaName string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE ollama_reset_cycles SET peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update ollama cycle: %w", err)
@@ -269,8 +270,8 @@ func (s *Store) QueryActiveOllamaCycle(quotaName string) (*OllamaResetCycle, err
 
 	err := s.db.QueryRow(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM ollama_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM ollama_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	).Scan(
 		&cycle.ID, &cycle.QuotaName, &cycleStart, &cycleEnd, &resetsAt,
 		&cycle.PeakUtilization, &cycle.TotalDelta,
@@ -298,8 +299,8 @@ func (s *Store) QueryActiveOllamaCycle(quotaName string) (*OllamaResetCycle, err
 
 func (s *Store) QueryOllamaCycleHistory(quotaName string, limit ...int) ([]*OllamaResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM ollama_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM ollama_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -339,9 +340,9 @@ func (s *Store) QueryOllamaCycleHistory(quotaName string, limit ...int) ([]*Olla
 func (s *Store) QueryOllamaCyclesSince(quotaName string, since time.Time) ([]*OllamaResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM ollama_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
+		FROM ollama_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL AND cycle_start >= ?
 		ORDER BY cycle_start DESC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		quotaName, s.accountID, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ollama cycles since: %w", err)
@@ -378,9 +379,9 @@ func (s *Store) QueryOllamaUtilizationSeries(quotaName string, since time.Time) 
 		`SELECT s.captured_at, qv.utilization
 		FROM ollama_quota_values qv
 		JOIN ollama_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		s.accountID, quotaName, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query utilization series: %w", err)
@@ -407,8 +408,8 @@ func (s *Store) QueryOllamaLatestPerQuota() ([]OllamaLatestQuota, error) {
 		       s.captured_at, s.plan, s.account_name
 		FROM ollama_quota_values qv
 		JOIN ollama_snapshots s ON s.id = qv.snapshot_id
-		WHERE s.id = (SELECT MAX(id) FROM ollama_snapshots)
-		ORDER BY qv.quota_name ASC`)
+		WHERE s.id = (SELECT MAX(id) FROM ollama_snapshots WHERE account_id = ?)
+		ORDER BY qv.quota_name ASC`, s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest per-quota: %w", err)
 	}
@@ -446,7 +447,8 @@ func (s *Store) QueryOllamaLatestPerQuota() ([]OllamaLatestQuota, error) {
 
 func (s *Store) QueryAllOllamaQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM ollama_reset_cycles ORDER BY quota_name`,
+		`SELECT DISTINCT quota_name FROM ollama_reset_cycles WHERE account_id = ? ORDER BY quota_name`,
+		s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ollama quota names: %w", err)
@@ -514,9 +516,9 @@ func (s *Store) QueryOllamaCycleOverview(groupBy string, limit int) ([]CycleOver
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM ollama_snapshots s
 			JOIN ollama_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE s.account_id = ? AND qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
 			ORDER BY qv.utilization DESC LIMIT 1`,
-			groupBy,
+			s.accountID, groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&snapshotID, &capturedAt)

@@ -55,11 +55,11 @@ func (s *Store) InsertCommandCodeSnapshot(snapshot *api.CommandCodeSnapshot) (in
 
 	result, err := tx.Exec(
 		`INSERT INTO commandcode_snapshots (
-			captured_at, raw_json, account_name, account_id, org_id, plan, status,
+			scope_account_id, captured_at, raw_json, account_name, account_id, org_id, plan, status,
 			monthly_credits, purchased_credits, free_credits, remaining_credits,
 			period_start, period_end, period_cost, period_requests, period_tokens, quota_count
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		snapshot.CapturedAt.Format(time.RFC3339Nano),
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.accountID, snapshot.CapturedAt.Format(time.RFC3339Nano),
 		snapshot.RawJSON,
 		snapshot.AccountName,
 		snapshot.AccountID,
@@ -161,7 +161,8 @@ func (s *Store) QueryLatestCommandCode() (*api.CommandCodeSnapshot, error) {
 		`SELECT id, captured_at, account_name, account_id, org_id, plan, status,
 		        monthly_credits, purchased_credits, free_credits, remaining_credits,
 		        period_start, period_end, period_cost, period_requests, period_tokens
-		FROM commandcode_snapshots ORDER BY captured_at DESC LIMIT 1`,
+		FROM commandcode_snapshots WHERE scope_account_id = ? ORDER BY captured_at DESC LIMIT 1`,
+		s.accountID,
 	).Scan(
 		&snapshot.ID, &capturedAt, &snapshot.AccountName, &snapshot.AccountID, &snapshot.OrgID,
 		&snapshot.Plan, &snapshot.Status,
@@ -196,12 +197,12 @@ func (s *Store) QueryCommandCodeRange(start, end time.Time, limit ...int) ([]*ap
 		period_start, period_end, period_cost, period_requests, period_tokens`
 
 	query := `SELECT ` + columns + ` FROM commandcode_snapshots
-		WHERE captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
-	args := []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
+		WHERE scope_account_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at ASC`
+	args := []interface{}{s.accountID, start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)}
 	if len(limit) > 0 && limit[0] > 0 {
 		query = `SELECT ` + columns + ` FROM (
 				SELECT ` + columns + ` FROM commandcode_snapshots
-				WHERE captured_at BETWEEN ? AND ?
+				WHERE scope_account_id = ? AND captured_at BETWEEN ? AND ?
 				ORDER BY captured_at DESC
 				LIMIT ?
 			) recent
@@ -214,8 +215,8 @@ func (s *Store) QueryCommandCodeRange(start, end time.Time, limit ...int) ([]*ap
 
 // QueryCommandCodeChartRange samples the entire range with at most 200 snapshots.
 func (s *Store) QueryCommandCodeChartRange(start, end time.Time) ([]*api.CommandCodeSnapshot, error) {
-	query := windowChartQuery("commandcode_snapshots", "id, captured_at, account_name, account_id, org_id, plan, status, monthly_credits, purchased_credits, free_credits, remaining_credits, period_start, period_end, period_cost, period_requests, period_tokens")
-	return s.queryCommandCodeSnapshots(query, []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano)})
+	query := windowChartQueryWhere("commandcode_snapshots", "id, captured_at, account_name, account_id, org_id, plan, status, monthly_credits, purchased_credits, free_credits, remaining_credits, period_start, period_end, period_cost, period_requests, period_tokens", "scope_account_id = ?")
+	return s.queryCommandCodeSnapshots(query, []interface{}{start.UTC().Format(time.RFC3339Nano), end.UTC().Format(time.RFC3339Nano), s.accountID})
 }
 
 func (s *Store) queryCommandCodeSnapshots(query string, args []interface{}) ([]*api.CommandCodeSnapshot, error) {
@@ -300,8 +301,8 @@ func (s *Store) CreateCommandCodeCycle(quotaName string, cycleStart time.Time, r
 	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO commandcode_reset_cycles (quota_name, cycle_start, resets_at) VALUES (?, ?, ?)`,
-		quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
+		`INSERT INTO commandcode_reset_cycles (account_id, quota_name, cycle_start, resets_at) VALUES (?, ?, ?, ?)`,
+		s.accountID, quotaName, cycleStart.Format(time.RFC3339Nano), resetsAtVal,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create commandcode cycle: %w", err)
@@ -318,8 +319,8 @@ func (s *Store) CreateCommandCodeCycle(quotaName string, cycleStart time.Time, r
 func (s *Store) CloseCommandCodeCycle(quotaName string, cycleEnd time.Time, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE commandcode_reset_cycles SET cycle_end = ?, peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleEnd.Format(time.RFC3339Nano), peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to close commandcode cycle: %w", err)
@@ -331,8 +332,8 @@ func (s *Store) CloseCommandCodeCycle(quotaName string, cycleEnd time.Time, peak
 func (s *Store) UpdateCommandCodeCycle(quotaName string, peak, delta float64) error {
 	_, err := s.db.Exec(
 		`UPDATE commandcode_reset_cycles SET peak_utilization = ?, total_delta = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		peak, delta, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		peak, delta, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update commandcode cycle: %w", err)
@@ -348,8 +349,8 @@ func (s *Store) UpdateCommandCodeCycleResetsAt(quotaName string, resetsAt *time.
 	}
 	_, err := s.db.Exec(
 		`UPDATE commandcode_reset_cycles SET resets_at = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		resetsAtVal, quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		resetsAtVal, quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update commandcode cycle reset: %w", err)
@@ -362,8 +363,8 @@ func (s *Store) UpdateCommandCodeCycleResetsAt(quotaName string, resetsAt *time.
 func (s *Store) RestartCommandCodeCycle(quotaName string, cycleStart, resetsAt time.Time) error {
 	_, err := s.db.Exec(
 		`UPDATE commandcode_reset_cycles SET cycle_start = ?, peak_utilization = 0, total_delta = 0, resets_at = ?
-		WHERE quota_name = ? AND cycle_end IS NULL`,
-		cycleStart.Format(time.RFC3339Nano), resetsAt.Format(time.RFC3339Nano), quotaName,
+		WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		cycleStart.Format(time.RFC3339Nano), resetsAt.Format(time.RFC3339Nano), quotaName, s.accountID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to restart commandcode cycle: %w", err)
@@ -399,8 +400,8 @@ func scanCommandCodeCycle(rows *sql.Rows) (*CommandCodeResetCycle, error) {
 func (s *Store) QueryActiveCommandCodeCycle(quotaName string) (*CommandCodeResetCycle, error) {
 	rows, err := s.db.Query(
 		`SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM commandcode_reset_cycles WHERE quota_name = ? AND cycle_end IS NULL`,
-		quotaName,
+		FROM commandcode_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NULL`,
+		quotaName, s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query active commandcode cycle: %w", err)
@@ -420,8 +421,8 @@ func (s *Store) QueryActiveCommandCodeCycle(quotaName string) (*CommandCodeReset
 // QueryCommandCodeCycleHistory returns closed cycles, newest first.
 func (s *Store) QueryCommandCodeCycleHistory(quotaName string, limit ...int) ([]*CommandCodeResetCycle, error) {
 	query := `SELECT id, quota_name, cycle_start, cycle_end, resets_at, peak_utilization, total_delta
-		FROM commandcode_reset_cycles WHERE quota_name = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
-	args := []interface{}{quotaName}
+		FROM commandcode_reset_cycles WHERE quota_name = ? AND account_id = ? AND cycle_end IS NOT NULL ORDER BY cycle_start DESC`
+	args := []interface{}{quotaName, s.accountID}
 	if len(limit) > 0 && limit[0] > 0 {
 		query += ` LIMIT ?`
 		args = append(args, limit[0])
@@ -451,9 +452,9 @@ func (s *Store) QueryCommandCodeUtilizationSeries(quotaName string, since time.T
 		`SELECT s.captured_at, qv.utilization
 		FROM commandcode_quota_values qv
 		JOIN commandcode_snapshots s ON s.id = qv.snapshot_id
-		WHERE qv.quota_name = ? AND s.captured_at >= ?
+		WHERE s.scope_account_id = ? AND qv.quota_name = ? AND s.captured_at >= ?
 		ORDER BY s.captured_at ASC`,
-		quotaName, since.UTC().Format(time.RFC3339Nano),
+		s.accountID, quotaName, since.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query commandcode utilization series: %w", err)
@@ -482,8 +483,8 @@ func (s *Store) QueryCommandCodeLatestPerQuota() ([]CommandCodeLatestQuota, erro
 		       qv.remaining, s.captured_at, s.plan, s.account_name
 		FROM commandcode_quota_values qv
 		JOIN commandcode_snapshots s ON s.id = qv.snapshot_id
-		WHERE s.id = (SELECT MAX(id) FROM commandcode_snapshots)
-		ORDER BY qv.quota_name ASC`)
+		WHERE s.id = (SELECT MAX(id) FROM commandcode_snapshots WHERE scope_account_id = ?)
+		ORDER BY qv.quota_name ASC`, s.accountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query latest commandcode per-quota: %w", err)
 	}
@@ -512,7 +513,8 @@ func (s *Store) QueryCommandCodeLatestPerQuota() ([]CommandCodeLatestQuota, erro
 // QueryAllCommandCodeQuotaNames returns every quota window seen in cycles.
 func (s *Store) QueryAllCommandCodeQuotaNames() ([]string, error) {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT quota_name FROM commandcode_reset_cycles ORDER BY quota_name`,
+		`SELECT DISTINCT quota_name FROM commandcode_reset_cycles WHERE account_id = ? ORDER BY quota_name`,
+		s.accountID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query commandcode quota names: %w", err)
@@ -588,9 +590,9 @@ func (s *Store) QueryCommandCodeCycleOverview(groupBy string, limit int) ([]Cycl
 		err := s.db.QueryRow(
 			`SELECT s.id, s.captured_at FROM commandcode_snapshots s
 			JOIN commandcode_quota_values qv ON qv.snapshot_id = s.id
-			WHERE qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
+			WHERE s.scope_account_id = ? AND qv.quota_name = ? AND s.captured_at >= ? AND s.captured_at < ?
 			ORDER BY qv.utilization DESC LIMIT 1`,
-			groupBy,
+			s.accountID, groupBy,
 			c.CycleStart.Format(time.RFC3339Nano),
 			endBoundary.Format(time.RFC3339Nano),
 		).Scan(&snapshotID, &capturedAt)

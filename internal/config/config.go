@@ -155,6 +155,8 @@ type Config struct {
 	APIIntegrationsEnabled   bool          // ONWATCH_API_INTEGRATIONS_ENABLED (default: true)
 	APIIntegrationsDir       string        // ONWATCH_API_INTEGRATIONS_DIR (default: ~/.onwatch/api-integrations or /data/api-integrations)
 	APIIntegrationsRetention time.Duration // ONWATCH_API_INTEGRATIONS_RETENTION (example: 720h, 0 disables pruning)
+	PricingFile              string        // ONWATCH_PRICING_FILE: optional JSON array of exact provider/model USD token rates
+	OMPDiscoveryEnabled      bool          // ONWATCH_OMP_ENABLED (default: true): optional read-only omp credential discovery
 
 	// Shared configuration
 	PollInterval       time.Duration // ONWATCH_POLL_INTERVAL (seconds → Duration)
@@ -654,6 +656,8 @@ func loadFromEnvAndFlags(flags *flagValues) (*Config, error) {
 			cfg.APIIntegrationsRetention = v
 		}
 	}
+	cfg.PricingFile = expandTilde(strings.TrimSpace(os.Getenv("ONWATCH_PRICING_FILE")))
+	cfg.OMPDiscoveryEnabled = !strings.EqualFold(strings.TrimSpace(os.Getenv("ONWATCH_OMP_ENABLED")), "false")
 
 	// Poll Interval (seconds) - ONWATCH_* first, SYNTRACK_* fallback
 	if flags.interval > 0 {

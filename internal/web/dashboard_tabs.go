@@ -322,7 +322,7 @@ func (h *Handler) filterDashboardProviders(providers []string) []string {
 func (h *Handler) buildDashboardProviderTabs() []string {
 	providers := []string{}
 	if h.config != nil {
-		providers = h.config.AvailableProviders()
+		providers = h.availableAccountProviders()
 		providers = h.filterDashboardProviders(providers)
 
 		hasTools := h.config.APIIntegrationsEnabled
@@ -330,7 +330,7 @@ func (h *Handler) buildDashboardProviderTabs() []string {
 		if toolsVisible {
 			providers = append(providers, "api-integrations")
 		}
-		if h.config.HasMultipleProviders() {
+		if len(providers) > 1 && !(len(providers) == 2 && providers[1] == "api-integrations") {
 			providers = append(providers, "both")
 		}
 	}
