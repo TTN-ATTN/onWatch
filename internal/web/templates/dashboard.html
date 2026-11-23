@@ -43,11 +43,18 @@
             <ul class="codex-profile-menu" id="alibaba-profile-menu" role="listbox" aria-label="Select Alibaba account"></ul>
         </div>
         {{if .AccountOptions}}
-        <label class="codex-profile-trigger">Account
-            <select id="provider-account-select" class="codex-profile-trigger" aria-label="Provider account">
-                {{range .AccountOptions}}<option value="{{.ID}}" {{if eq .ID $.SelectedAccount}}selected{{end}}>{{.Name}}</option>{{end}}
-            </select>
-        </label>
+        {{/* Same dropdown as the native Codex/MiniMax/Alibaba selectors. The
+             scoped account ID stays on the wrapper even when a single account
+             hides the menu, so every request remains scoped. */}}
+        <div class="codex-profile-dropdown" id="provider-account-dropdown" data-account-id="{{.SelectedAccount}}"{{if lt (len .AccountOptions) 2}} hidden{{end}}>
+            <button class="codex-profile-trigger" id="provider-account-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="provider-account-menu">
+                {{range .AccountOptions}}{{if eq .ID $.SelectedAccount}}<span class="codex-profile-label" title="{{.Name}}">{{.Name}}</span>{{end}}{{end}}
+                <svg class="codex-profile-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <ul class="codex-profile-menu" id="provider-account-menu" role="listbox" aria-label="Select account">
+                {{range .AccountOptions}}<li class="codex-profile-item{{if eq .ID $.SelectedAccount}} active{{end}}" role="option" tabindex="0" data-account-id="{{.ID}}" aria-selected="{{if eq .ID $.SelectedAccount}}true{{else}}false{{end}}" title="{{.Name}}">{{.Name}}</li>{{end}}
+            </ul>
+        </div>
         {{end}}
         <div class="header-actions">
             <button class="header-btn" id="refresh-btn" aria-label="Refresh data" title="Refresh now">

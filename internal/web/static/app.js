@@ -103,10 +103,10 @@ function providerParam() {
   } else if (provider === 'alibaba') {
     param += alibabaAccountParam();
   } else {
-    // Managed accounts for other providers: the server renders this selector
-    // with the scoped account already chosen, so every request stays scoped.
-    const select = document.getElementById('provider-account-select');
-    if (select && select.value) param += `&account=${encodeURIComponent(select.value)}`;
+    // Managed accounts for other providers: the server renders the scoped
+    // account on this dropdown, so every request stays on that account.
+    const dropdown = document.getElementById('provider-account-dropdown');
+    if (dropdown && dropdown.dataset.accountId) param += `&account=${encodeURIComponent(dropdown.dataset.accountId)}`;
   }
   return param;
 }
@@ -14620,15 +14620,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initLayoutToggle();
   await initTimezoneBadge();
   setupProviderSelector();
-  const providerAccountSelect = document.getElementById('provider-account-select');
-  if (providerAccountSelect) {
-    providerAccountSelect.addEventListener('change', () => {
-      const params = new URLSearchParams(window.location.search);
-      params.set('provider', getCurrentProvider());
-      params.set('account', providerAccountSelect.value);
-      window.location.href = `${BASE_PATH}/?${params.toString()}`;
-    });
-  }
+  initProviderAccountDropdown();
   setupZenmuxUsage();
   setupRangeSelector();
   setupAPIIntegrationsMetricSelector();
@@ -14824,4 +14816,43 @@ function renderMistralCards(data) {
     add('Pay-as-you-go spend',mistralMoney(b.amount,b.currency),b.amount==null?'Mistral has not returned a reliable spend amount.':new Date(b.periodStart).toLocaleDateString()+' - '+new Date(b.periodEnd).toLocaleDateString(),b.capturedAt&&b.amount!=null?(b.status==='stale'?'Stale · ':'')+'Updated '+new Date(b.capturedAt).toLocaleString():'You can hide PAYG in Settings > Providers > Mistral.',null);
   }
   renderMistralConnection(data);
+}
+
+// Server-rendered account dropdown for providers without a native selector.
+// Switching reloads the page scoped to the chosen account.
+function initProviderAccountDropdown() {
+  const dropdown = document.getElementById('provider-account-dropdown');
+  const trigger = document.getElementById('provider-account-trigger');
+  const menu = document.getElementById('provider-account-menu');
+  if (!dropdown || !trigger || !menu) return;
+  const items = [...menu.querySelectorAll('.codex-profile-item')];
+  const setOpen = (open) => {
+    menu.classList.toggle('open', open);
+    trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) (menu.querySelector('.codex-profile-item.active') || items[0])?.focus();
+  };
+  const choose = (item) => {
+    setOpen(false);
+    if (!item || item.dataset.accountId === dropdown.dataset.accountId) return;
+    const params = new URLSearchParams(window.location.search);
+    params.set('provider', getCurrentProvider());
+    params.set('account', item.dataset.accountId);
+    window.location.href = `${BASE_PATH}/?${params.toString()}`;
+  };
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setOpen(!menu.classList.contains('open'));
+  });
+  items.forEach((item, index) => {
+    item.addEventListener('click', () => choose(item));
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(item); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); items[(index + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(index - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Escape') { setOpen(false); trigger.focus(); }
+    });
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#provider-account-dropdown')) setOpen(false);
+  });
 }
