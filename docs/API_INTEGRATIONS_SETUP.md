@@ -161,12 +161,14 @@ You can also build your own wrapper around the helper and write any number of in
 
 ## omp
 
-[`examples/api_integrations/omp/onwatch.ts`](../examples/api_integrations/omp/onwatch.ts) is an omp extension that reports every model call omp makes: main-agent replies, subagent replies, and side calls such as titles and compaction. Install it once:
+[`examples/api_integrations/omp/onwatch.ts`](../examples/api_integrations/omp/onwatch.ts) is an omp extension that reports every model call omp makes: main-agent replies, subagent replies, and side calls such as titles and compaction. Install it with:
 
 ```bash
-mkdir -p ~/.omp/agent/extensions
-cp examples/api_integrations/omp/onwatch.ts ~/.omp/agent/extensions/onwatch.ts
+scripts/install-omp-extension.sh            # copy into ~/.omp/agent/extensions
+scripts/install-omp-extension.sh --link     # or symlink it, so `git pull` keeps it current
 ```
+
+Without a checkout, `curl -fsSL https://raw.githubusercontent.com/TTN-ATTN/onWatch/main/scripts/install-omp-extension.sh | bash` downloads and installs it. `--profile NAME` targets an `omp --profile` agent directory, and `--uninstall` removes it. The script never overwrites an unrelated `extensions/onwatch.ts` unless you pass `--force`. Restart running omp sessions to load it.
 
 New omp sessions then append one event per call to `omp-YYYY-MM.jsonl` in the API Integrations directory. Each event carries `omp_provider`, so onWatch attaches it to the matching `omp / <provider>` account on **Accounts & Costs** and prices it with its own rates (omp's cost figures are not used).
 
