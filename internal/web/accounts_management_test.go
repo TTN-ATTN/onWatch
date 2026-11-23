@@ -391,3 +391,43 @@ func TestAccountsHTTPCostReportAndLocalEstimateKeepIdentityAndScope(t *testing.T
 		t.Fatalf("unknown model cost was invented or borrowed: %+v", unpriced)
 	}
 }
+
+func TestAccountsHTTPCopiesOnlyAPIKeysThroughPost(t *testing.T) {
+	h, _ := newAccountHTTPFixture(t)
+	keyed := saveAccountHTTP(t, h, manualAccountHTTP("zai", "keyed", "quota"))
+	tokenOnly := saveAccountHTTP(t, h, accounts.Input{Provider: "codex", Name: "token-only", Mode: "quota", BillingKind: "none", Credentials: map[string]string{"token": "account-http-secret-codex-oauth"}})
+	hasKey := map[int64]bool{}
+	for _, row := range listAccountsHTTP(t, h) {
+		hasKey[row.ID] = row.HasAPIKey
+	}
+	if !hasKey[keyed] || hasKey[tokenOnly] {
+		t.Fatalf("hasApiKey must mark only accounts holding an API key: %+v", hasKey)
+	}
+	copyKey := func(method, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/api/accounts/key", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.AccountAPIKey(w, r)
+		return w
+	}
+	w := copyKey(http.MethodPost, fmt.Sprintf(`{"id":%d}`, keyed))
+	var result struct {
+		APIKey string `json:"apiKey"`
+	}
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.APIKey != "account-http-secret-zai-keyed" {
+		t.Fatalf("copy returned %d %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("a revealed API key must not be cacheable")
+	}
+	for _, tc := range []struct{ method, body string }{
+		{http.MethodGet, ""},
+		{http.MethodPost, fmt.Sprintf(`{"id":%d}`, tokenOnly)},
+		{http.MethodPost, fmt.Sprintf(`{"id":%d,"field":"token"}`, tokenOnly)},
+		{http.MethodPost, `{"id":0}`},
+	} {
+		w := copyKey(tc.method, tc.body)
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "account-http-secret-") {
+			t.Fatalf("%s %s must not reveal a credential: %d %s", tc.method, tc.body, w.Code, w.Body.String())
+		}
+	}
+}

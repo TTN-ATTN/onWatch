@@ -60,6 +60,7 @@ type Account struct {
 	BaseURL       string `json:"baseUrl"`
 	BillingKind   string `json:"billingKind"`
 	HasCredential bool   `json:"hasCredential"`
+	HasAPIKey     bool   `json:"hasApiKey"`
 	Legacy        bool   `json:"legacy"`
 	ReadOnly      bool   `json:"readOnly"`
 }
@@ -424,6 +425,34 @@ func hasCredential(values map[string]string) bool {
 	return false
 }
 
+// apiKeyFields hold plain provider API keys, in preference order. OAuth tokens,
+// session cookies and CSRF tokens are deliberately absent: they are never
+// copyable from the dashboard.
+var apiKeyFields = []string{"api_key", "management_api_key"}
+
+func apiKeyValue(values map[string]string) string {
+	for _, field := range apiKeyFields {
+		if value := values[field]; value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// APIKey returns the API key one account authenticates with, for an explicit
+// dashboard copy action. Callers must never log, cache or persist it.
+func (s *Service) APIKey(id int64) (string, error) {
+	_, settings, err := s.Get(id)
+	if err != nil {
+		return "", err
+	}
+	key := apiKeyValue(settings.Credentials)
+	if key == "" {
+		return "", fmt.Errorf("this account has no API key")
+	}
+	return key, nil
+}
+
 // ResolveOMPProvider maps the omp provider name on a reported call to the one
 // active account discovered from it. Ambiguous names (one omp provider holding
 // several logins) stay unbound rather than guessing which login was used.
@@ -471,7 +500,7 @@ func (s *Service) List() ([]Account, error) {
 		if !settings.Managed && !settings.Legacy && !credentialed && !s.config.HasProvider(row.Provider) {
 			continue
 		}
-		result = append(result, Account{ID: row.ID, Provider: row.Provider, Name: row.Name, Source: settings.Source, Enabled: settings.IsEnabled(), Mode: settings.Mode, BaseURL: settings.BaseURL, BillingKind: settings.BillingKind, HasCredential: credentialed, Legacy: settings.Legacy, ReadOnly: settings.Source == "omp" || (!settings.Managed && !settings.Legacy)})
+		result = append(result, Account{ID: row.ID, Provider: row.Provider, Name: row.Name, Source: settings.Source, Enabled: settings.IsEnabled(), Mode: settings.Mode, BaseURL: settings.BaseURL, BillingKind: settings.BillingKind, HasCredential: credentialed, HasAPIKey: resolveErr == nil && apiKeyValue(resolved.Credentials) != "", Legacy: settings.Legacy, ReadOnly: settings.Source == "omp" || (!settings.Managed && !settings.Legacy)})
 	}
 	return result, nil
 }

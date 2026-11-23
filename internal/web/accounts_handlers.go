@@ -111,6 +111,36 @@ func (h *Handler) DiscoverAccounts(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"success": true, "imported": count, "message": h.accounts.Discovery().Message})
 }
 
+// AccountAPIKey returns one account's API key for the dashboard copy button.
+// POST keeps the key out of URLs, history and link prefetch; respondJSON marks
+// the response no-store, and the key itself is never logged.
+func (h *Handler) AccountAPIKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.accounts == nil {
+		respondError(w, http.StatusServiceUnavailable, "account management is unavailable")
+		return
+	}
+	var input struct {
+		ID int64 `json:"id"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || input.ID <= 0 {
+		respondError(w, http.StatusBadRequest, "invalid account ID")
+		return
+	}
+	key, err := h.accounts.APIKey(input.ID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.logger.Info("account API key copied", "account_id", input.ID)
+	respondJSON(w, http.StatusOK, map[string]string{"apiKey": key})
+}
+
 func (h *Handler) AccountUsage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondError(w, http.StatusMethodNotAllowed, "method not allowed")

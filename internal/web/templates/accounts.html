@@ -1,62 +1,126 @@
 {{define "content"}}
 <link rel="stylesheet" href="{{.BasePath}}/static/accounts.css?v={{.Version}}">
+<header class="app-header accounts-appbar">
+    <a href="{{.BasePath}}/" class="header-brand" aria-label="onWatch dashboard">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
+        <span class="brand-text">onWatch</span>
+    </a>
+    <nav class="accounts-appnav" aria-label="Main">
+        <a href="{{.BasePath}}/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Dashboard</span></a>
+        <a href="{{.BasePath}}/accounts" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg><span>Accounts</span></a>
+        <a href="{{.BasePath}}/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></a>
+    </nav>
+    <div class="header-controls">
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <a href="{{.BasePath}}/logout" class="header-btn" id="logout-btn" aria-label="Logout" title="Logout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        </a>
+    </div>
+</header>
 <div class="accounts-page" id="accounts-page">
     <header class="accounts-header">
-        <div><a href="{{.BasePath}}/">← Dashboard</a><h1>Accounts &amp; Costs</h1><p>Manage provider accounts and inspect account-scoped usage.</p></div>
-        <nav aria-label="Account actions" class="accounts-actions">
-            <a href="{{.BasePath}}/settings">Settings</a>
+        <div class="accounts-heading">
+            <h1>Accounts &amp; Costs</h1>
+            <p>Every account onWatch tracks, with its endpoint, key, quota and spend.</p>
+        </div>
+        <div class="accounts-actions accounts-page-actions" role="group" aria-label="Account actions">
             <button type="button" id="accounts-discover" disabled>Discover from omp</button>
             <button type="button" id="accounts-add" class="accounts-primary" disabled>Add account</button>
-        </nav>
+        </div>
     </header>
     <main id="main-content" tabindex="-1">
-        <p id="accounts-status" role="status" aria-live="polite"></p>
         <p id="accounts-error" class="accounts-error" role="alert" hidden></p>
-        <p id="accounts-discovery-note" class="accounts-muted"></p>
-        <section id="accounts-editor" class="accounts-card" aria-labelledby="accounts-editor-title" hidden>
-            <h2 id="accounts-editor-title">Add account</h2>
-            <form id="accounts-form">
-                <div class="accounts-fields">
-                    <label>Provider<select id="accounts-provider" required></select></label>
-                    <label>Account name<input id="accounts-name" type="text" maxlength="200" required autocomplete="off"></label>
-                    <label>Mode<select id="accounts-mode"><option value="quota">Quota dashboard</option><option value="cost">Costs &amp; usage</option></select></label>
-                    <label>Billing adapter<select id="accounts-billing"><option value="auto">Automatic</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="openai-compatible">OpenAI-compatible</option><option value="sub2api">Sub2API gateway</option><option value="none">None (local estimate only)</option></select></label>
-                    <label class="accounts-wide">Base URL (optional)<input id="accounts-base-url" type="url" placeholder="https://api.example.com" autocomplete="off" aria-describedby="accounts-url-note"></label>
-                </div>
-                <p class="accounts-muted" id="accounts-url-note">Provider billing requests use this URL when supported. Leave blank for the provider default.</p>
-                <fieldset id="accounts-credentials"><legend>Credentials</legend><p id="accounts-credential-note" class="accounts-muted"></p><div id="accounts-credential-fields" class="accounts-fields"></div></fieldset>
-                <label class="accounts-checkbox"><input id="accounts-enabled" type="checkbox" checked> Enabled (collect usage)</label>
-                <p id="accounts-form-error" class="accounts-error" role="alert" hidden></p>
-                <div class="accounts-actions"><button type="submit" id="accounts-save" class="accounts-primary">Save account</button><button type="button" id="accounts-cancel">Cancel</button></div>
-            </form>
-        </section>
-        <div class="accounts-layout">
+        <p id="accounts-discovery-note" class="accounts-muted accounts-discovery"></p>
+        <div class="accounts-layout" id="accounts-layout">
             <section class="accounts-card accounts-sidebar" aria-labelledby="accounts-list-title">
-                <h2 id="accounts-list-title">Accounts</h2>
-                <div id="accounts-list" class="accounts-list" aria-label="Select an account"><p>Loading accounts…</p></div>
+                <div class="accounts-sidebar-head"><h2 id="accounts-list-title">Accounts</h2><span id="accounts-count" class="accounts-count"></span></div>
+                <label class="accounts-search"><span class="accounts-sr-only">Filter accounts</span><input id="accounts-filter" type="search" placeholder="Filter by name, provider or URL  ( / )" autocomplete="off" spellcheck="false"></label>
+                <div id="accounts-list" class="accounts-list"><p class="accounts-muted">Loading accounts…</p></div>
             </section>
-            <section class="accounts-card accounts-detail" aria-labelledby="accounts-detail-title" aria-busy="false" id="accounts-detail">
-                <h2 id="accounts-detail-title">Account usage</h2>
-                <p id="accounts-empty">Select an account to inspect usage. Organization bills may overlap; accounts are never totaled together.</p>
+            <section class="accounts-card accounts-detail" id="accounts-detail" aria-labelledby="accounts-detail-title" aria-busy="false">
+                <button type="button" id="accounts-back-list" class="accounts-back-list">← All accounts</button>
+                <div class="accounts-detail-head">
+                    <div class="accounts-detail-heading">
+                        <h2 id="accounts-detail-title" tabindex="-1">Account</h2>
+                        <div id="accounts-badges" class="accounts-badges"></div>
+                    </div>
+                    <div id="accounts-detail-actions" class="accounts-actions" hidden>
+                        <button type="button" id="accounts-edit">Edit</button>
+                        <button type="button" id="accounts-pause">Pause</button>
+                        <button type="button" id="accounts-delete" class="accounts-danger">Delete</button>
+                    </div>
+                </div>
+                <p id="accounts-empty" class="accounts-muted">Select an account to see its endpoint, quota and spend. Accounts are never added together, because organization bills can overlap.</p>
                 <div id="accounts-selected" hidden>
-                    <div class="accounts-actions"><span id="accounts-selected-meta" class="accounts-muted"></span><button type="button" id="accounts-edit">Edit</button><button type="button" id="accounts-pause">Pause</button><button type="button" id="accounts-delete" class="accounts-danger">Delete</button></div>
-                    <div class="accounts-actions accounts-usage-controls"><label>Usage period<select id="accounts-range"><option value="7d">Last 7 days</option><option value="30d" selected>Last 30 days</option><option value="90d">Last 90 days</option></select></label><button type="button" id="accounts-refresh">Refresh usage</button><a id="accounts-quota-link" href="{{.BasePath}}/">Open quota dashboard</a></div>
+                    <section class="accounts-panel" aria-labelledby="accounts-connection-title">
+                        <h3 id="accounts-connection-title">Connection</h3>
+                        <dl class="accounts-connection">
+                            <div><dt>Provider</dt><dd id="accounts-conn-provider"></dd></div>
+                            <div><dt>Base URL</dt><dd class="accounts-copy-row"><code id="accounts-conn-url"></code><button type="button" id="accounts-copy-url" class="accounts-small">Copy URL</button></dd></div>
+                            <div id="accounts-conn-key"><dt>API key</dt><dd class="accounts-copy-row"><code aria-label="API key, hidden">••••••••••••••••</code><button type="button" id="accounts-copy-key" class="accounts-small">Copy API key</button></dd></div>
+                            <div id="accounts-conn-billing-row"><dt>Billing</dt><dd id="accounts-conn-billing"></dd></div>
+                            <div><dt>Source</dt><dd id="accounts-conn-source"></dd></div>
+                        </dl>
+                    </section>
+                    <div class="accounts-toolbar">
+                        <label>Period<select id="accounts-range"><option value="7d">Last 7 days</option><option value="30d" selected>Last 30 days</option><option value="90d">Last 90 days</option></select></label>
+                        <button type="button" id="accounts-refresh">Refresh</button>
+                        <span id="accounts-updated" class="accounts-muted"></span>
+                        <a id="accounts-quota-link" class="accounts-quota-link" href="{{.BasePath}}/">Open quota dashboard →</a>
+                    </div>
                     <p id="accounts-usage-error" class="accounts-error" role="alert" hidden></p>
                     <div id="accounts-usage" hidden>
-                        <section id="accounts-quota-panel" hidden aria-labelledby="accounts-quota-title"><h3 id="accounts-quota-title">Quota</h3><p id="accounts-quota-empty" class="accounts-muted"></p><pre id="accounts-quota-data" class="accounts-quota-data"></pre></section>
-                        <section id="accounts-cost-panel" aria-labelledby="accounts-cost-title">
-                            <h3 id="accounts-cost-title">Account spend</h3><p id="accounts-cost-amount" class="accounts-amount"></p><p id="accounts-cost-source"></p>
-                            <dl id="accounts-cost-facts" class="accounts-facts"></dl>
-                            <p class="accounts-muted">Provider-reported spend may cover an organization, not just this key. Local estimates use onWatch-observed tokens and native pricing; missing prices remain unknown. These are not combined into an organization total.</p>
+                        <section id="accounts-quota-panel" class="accounts-panel" aria-labelledby="accounts-quota-title" hidden>
+                            <div class="accounts-panel-head"><h3 id="accounts-quota-title">Quota</h3><span id="accounts-quota-plan" class="accounts-chip"></span></div>
+                            <div id="accounts-quota-meters" class="accounts-meters"></div>
+                            <p id="accounts-quota-empty" class="accounts-muted"></p>
+                            <details id="accounts-quota-raw" class="accounts-details"><summary>Raw quota data</summary><pre id="accounts-quota-data" class="accounts-quota-data"></pre></details>
                         </section>
-                        <p id="accounts-usage-message" role="status"></p>
-                        <div class="accounts-table-wrap" tabindex="0" role="region" aria-label="Daily usage, scroll horizontally"><table><caption>Daily usage · selected account only</caption><thead><tr><th scope="col">Date</th><th scope="col">Cost</th><th scope="col">Tokens</th><th scope="col">Requests</th></tr></thead><tbody id="accounts-daily"></tbody></table></div>
-                        <div class="accounts-table-wrap" tabindex="0" role="region" aria-label="Model usage, scroll horizontally"><table><caption>Model usage · selected account only</caption><thead><tr><th scope="col">Model</th><th scope="col">Cost</th><th scope="col">Input tokens</th><th scope="col">Output tokens</th><th scope="col">Cache read</th><th scope="col">Cache write</th><th scope="col">Requests</th></tr></thead><tbody id="accounts-models"></tbody></table></div>
+                        <section class="accounts-panel" aria-labelledby="accounts-cost-title">
+                            <h3 id="accounts-cost-title">Spend &amp; usage</h3>
+                            <div class="accounts-tiles">
+                                <div class="accounts-tile accounts-tile-main"><span>Spend</span><strong id="accounts-cost-amount"></strong><small id="accounts-cost-source"></small></div>
+                                <div class="accounts-tile"><span>Requests</span><strong id="accounts-total-requests"></strong><small id="accounts-total-period"></small></div>
+                                <div class="accounts-tile"><span>Tokens</span><strong id="accounts-total-tokens"></strong><small>input + output</small></div>
+                            </div>
+                            <p id="accounts-usage-message" class="accounts-note" role="status"></p>
+                            <details class="accounts-details"><summary>How this spend is measured</summary><dl id="accounts-cost-facts" class="accounts-facts"></dl><p class="accounts-muted">Provider-reported spend may cover a whole organization, not just this key. Local estimates use observed tokens and onWatch pricing; models without a price stay unknown.</p></details>
+                        </section>
+                        <section class="accounts-panel" aria-labelledby="accounts-daily-title">
+                            <h3 id="accounts-daily-title">Daily usage</h3>
+                            <div class="accounts-table-wrap" tabindex="0" role="region" aria-labelledby="accounts-daily-title"><table><thead><tr><th scope="col">Date</th><th scope="col">Cost</th><th scope="col">Tokens</th><th scope="col">Requests</th></tr></thead><tbody id="accounts-daily"></tbody></table></div>
+                        </section>
+                        <section class="accounts-panel" aria-labelledby="accounts-models-title">
+                            <h3 id="accounts-models-title">Models</h3>
+                            <div class="accounts-table-wrap" tabindex="0" role="region" aria-labelledby="accounts-models-title"><table><thead><tr><th scope="col">Model</th><th scope="col">Cost</th><th scope="col">Input</th><th scope="col">Output</th><th scope="col">Cache read</th><th scope="col">Cache write</th><th scope="col">Requests</th></tr></thead><tbody id="accounts-models"></tbody></table></div>
+                        </section>
                     </div>
                 </div>
             </section>
         </div>
     </main>
+    <dialog id="accounts-editor" class="accounts-dialog" aria-labelledby="accounts-editor-title">
+        <form id="accounts-form" novalidate>
+            <div class="accounts-dialog-head"><h2 id="accounts-editor-title">Add account</h2><button type="button" id="accounts-close" class="accounts-icon" aria-label="Close">×</button></div>
+            <div class="accounts-fields">
+                <label>Provider<select id="accounts-provider" required></select></label>
+                <label>Account name<input id="accounts-name" type="text" maxlength="200" required autocomplete="off"></label>
+                <label>Mode<select id="accounts-mode"><option value="quota">Quota dashboard</option><option value="cost">Costs &amp; usage</option></select></label>
+                <label id="accounts-billing-field">Billing adapter<select id="accounts-billing"><option value="auto">Automatic</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="openai-compatible">OpenAI-compatible</option><option value="sub2api">Sub2API gateway</option><option value="none">None (local estimate only)</option></select></label>
+                <p id="accounts-mode-note" class="accounts-muted accounts-wide"></p>
+                <label class="accounts-wide">Base URL (optional)<input id="accounts-base-url" type="url" placeholder="https://api.example.com/v1" autocomplete="off" spellcheck="false" aria-describedby="accounts-url-note"></label>
+                <p class="accounts-muted accounts-wide" id="accounts-url-note">Polling and billing requests use this URL. Leave blank for the provider's default endpoint.</p>
+            </div>
+            <fieldset id="accounts-credentials"><legend>Credentials</legend><p id="accounts-credential-note" class="accounts-muted"></p><div id="accounts-credential-fields" class="accounts-fields"></div></fieldset>
+            <label class="accounts-checkbox"><input id="accounts-enabled" type="checkbox" checked> Enabled (collect usage)</label>
+            <p id="accounts-form-error" class="accounts-error" role="alert" hidden></p>
+            <div class="accounts-actions accounts-dialog-actions"><button type="button" id="accounts-cancel">Cancel</button><button type="submit" id="accounts-save" class="accounts-primary">Save account</button></div>
+        </form>
+    </dialog>
+    <div id="accounts-status" class="accounts-toast" role="status" aria-live="polite"></div>
 </div>
 <script src="{{.BasePath}}/static/accounts.js?v={{.Version}}" defer></script>
 {{end}}
