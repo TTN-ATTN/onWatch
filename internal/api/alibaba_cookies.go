@@ -3,7 +3,6 @@ package api
 import (
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 )
@@ -71,14 +70,6 @@ func alibabaCookieDomainRelevant(domain string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	domain = strings.TrimPrefix(domain, ".")
 	return alibabaRedirectHostAllowed(domain)
-}
-
-func alibabaHostFromURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
-	}
-	return strings.ToLower(u.Hostname())
 }
 
 // ParseAlibabaCookies turns a cookie export into a Cookie header value.
@@ -244,17 +235,4 @@ func readAlibabaCookiesFile(path string) (string, error) {
 		return "", fmt.Errorf("alibaba: reading cookies file: %w", err)
 	}
 	return string(data), nil
-}
-
-// LoadAlibabaCookieJarFile reads a cookie export and returns a domain-aware jar.
-func LoadAlibabaCookieJarFile(path string) (alibabaCookieJar, error) {
-	data, err := readAlibabaCookiesFile(path)
-	if err != nil {
-		return alibabaCookieJar{}, err
-	}
-	jar := parseAlibabaCookieJar(data)
-	if jar.empty() {
-		return alibabaCookieJar{}, fmt.Errorf("%w: no cookies in %s", ErrAlibabaMissingCookies, path)
-	}
-	return jar, nil
 }

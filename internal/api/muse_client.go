@@ -62,19 +62,6 @@ func WithMuseTimeout(timeout time.Duration) MuseClientOption {
 	}
 }
 
-// WithMuseHTTPTransport overrides the HTTP transport (for testing).
-func WithMuseHTTPTransport(rt http.RoundTripper) MuseClientOption {
-	return func(c *MuseClient) {
-		c.httpClient.Transport = rt
-	}
-}
-
-func withMuseNow(now func() time.Time) MuseClientOption {
-	return func(c *MuseClient) {
-		c.now = now
-	}
-}
-
 // NewMuseClient creates a new Muse API client. An empty model falls back to
 // DefaultMuseModel.
 func NewMuseClient(apiKey, model string, logger *slog.Logger, opts ...MuseClientOption) *MuseClient {

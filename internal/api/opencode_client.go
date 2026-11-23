@@ -36,12 +36,6 @@ type OpenCodeClient struct {
 
 type OpenCodeClientOption func(*OpenCodeClient)
 
-func WithOpenCodeHTTPTransport(rt http.RoundTripper) OpenCodeClientOption {
-	return func(c *OpenCodeClient) {
-		c.httpClient.Transport = rt
-	}
-}
-
 func WithOpenCodeTimeout(timeout time.Duration) OpenCodeClientOption {
 	return func(c *OpenCodeClient) {
 		c.httpClient.Timeout = timeout

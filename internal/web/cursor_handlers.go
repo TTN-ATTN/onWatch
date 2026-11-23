@@ -464,17 +464,6 @@ func (h *Handler) insightsCursor(w http.ResponseWriter, _ *http.Request, rangeDu
 	respondInsights(w, h.buildCursorInsights(hidden, rangeDur))
 }
 
-func (h *Handler) cursorQuotaNames() []string {
-	if h.store == nil {
-		return nil
-	}
-	names, err := h.store.QueryAllCursorQuotaNames()
-	if err != nil {
-		return nil
-	}
-	return names
-}
-
 func (h *Handler) buildCursorSummaryMap() map[string]interface{} {
 	if h.store == nil || h.cursorTracker == nil {
 		return map[string]interface{}{}

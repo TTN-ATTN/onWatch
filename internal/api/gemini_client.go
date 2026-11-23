@@ -49,13 +49,6 @@ func WithGeminiBaseURL(url string) GeminiOption {
 	}
 }
 
-// WithGeminiTimeout sets a custom timeout.
-func WithGeminiTimeout(timeout time.Duration) GeminiOption {
-	return func(c *GeminiClient) {
-		c.httpClient.Timeout = timeout
-	}
-}
-
 // NewGeminiClient creates a Gemini quota API client.
 func NewGeminiClient(token string, logger *slog.Logger, opts ...GeminiOption) *GeminiClient {
 	if logger == nil {

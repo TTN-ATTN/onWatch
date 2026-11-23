@@ -112,13 +112,6 @@ func WithAlibabaPOPGateway(gateway string) AlibabaOption {
 	}
 }
 
-// WithAlibabaHTTPTransport overrides the HTTP transport (for testing).
-func WithAlibabaHTTPTransport(rt http.RoundTripper) AlibabaOption {
-	return func(c *AlibabaClient) {
-		c.httpClient.Transport = rt
-	}
-}
-
 // WithAlibabaTimeout sets a custom request timeout (for testing).
 func WithAlibabaTimeout(timeout time.Duration) AlibabaOption {
 	return func(c *AlibabaClient) {

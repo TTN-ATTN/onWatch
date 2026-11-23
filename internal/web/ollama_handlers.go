@@ -453,17 +453,6 @@ func (h *Handler) insightsOllama(w http.ResponseWriter, _ *http.Request, rangeDu
 	respondInsights(w, h.buildOllamaInsights(hidden, rangeDur))
 }
 
-func (h *Handler) ollamaQuotaNames() []string {
-	if h.store == nil {
-		return nil
-	}
-	names, err := h.store.QueryAllOllamaQuotaNames()
-	if err != nil {
-		return nil
-	}
-	return names
-}
-
 func (h *Handler) buildOllamaSummaryMap() map[string]interface{} {
 	if h.store == nil || h.ollamaTracker == nil {
 		return map[string]interface{}{}

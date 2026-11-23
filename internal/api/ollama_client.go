@@ -52,12 +52,6 @@ func WithOllamaTimeout(timeout time.Duration) OllamaClientOption {
 	}
 }
 
-func WithOllamaHTTPTransport(rt http.RoundTripper) OllamaClientOption {
-	return func(c *OllamaClient) {
-		c.httpClient.Transport = rt
-	}
-}
-
 // WithOllamaMonthlyLimit overrides the plan-derived included usage cap (USD).
 func WithOllamaMonthlyLimit(usd float64) OllamaClientOption {
 	return func(c *OllamaClient) {

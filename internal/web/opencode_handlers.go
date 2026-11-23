@@ -491,17 +491,6 @@ func (h *Handler) insightsOpenCode(w http.ResponseWriter, _ *http.Request, range
 	respondInsights(w, h.buildOpenCodeInsights(hidden, rangeDur))
 }
 
-func (h *Handler) opencodeQuotaNames() []string {
-	if h.store == nil {
-		return nil
-	}
-	names, err := h.store.QueryAllOpenCodeQuotaNames()
-	if err != nil {
-		return nil
-	}
-	return names
-}
-
 func (h *Handler) buildOpenCodeSummaryMap() map[string]interface{} {
 	if h.store == nil || h.opencodeTracker == nil {
 		return map[string]interface{}{}

@@ -37,13 +37,6 @@ func WithOpenRouterBaseURL(url string) OpenRouterOption {
 	}
 }
 
-// WithOpenRouterTimeout sets a custom timeout (for testing).
-func WithOpenRouterTimeout(timeout time.Duration) OpenRouterOption {
-	return func(c *OpenRouterClient) {
-		c.httpClient.Timeout = timeout
-	}
-}
-
 // NewOpenRouterClient creates a new OpenRouter API client.
 func NewOpenRouterClient(apiKey string, logger *slog.Logger, opts ...OpenRouterOption) *OpenRouterClient {
 	if logger == nil {

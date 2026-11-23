@@ -1073,20 +1073,6 @@ func (h *Handler) menubarCachedAccountCards(base string, attempted map[string]st
 	return entries
 }
 
-// menubarCardAccountID extracts the account ID from an account-scoped card ID
-// ("codex:2", "minimax:3"). Providers without a scope return 0.
-func menubarCardAccountID(cardID string) int64 {
-	idx := strings.IndexByte(cardID, ':')
-	if idx < 0 {
-		return 0
-	}
-	id, err := strconv.ParseInt(cardID[idx+1:], 10, 64)
-	if err != nil {
-		return 0
-	}
-	return id
-}
-
 // updateMenubarProviderHistory changes one settings value so provider history
 // and automatic visibility are saved together. A nil history marks settings
 // written before provider discovery was tracked.
@@ -1348,15 +1334,6 @@ func preferredStatusProviders(providers []menubarProviderOption) []menubarProvid
 		return visible
 	}
 	return providers
-}
-
-func providerOptionByID(providerID string, providers []menubarProviderOption) *menubarProviderOption {
-	for i := range providers {
-		if providers[i].ID == providerID {
-			return &providers[i]
-		}
-	}
-	return nil
 }
 
 func providerHasQuota(provider menubarProviderOption, quotaKey string) bool {

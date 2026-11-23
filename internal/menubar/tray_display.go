@@ -67,18 +67,6 @@ func TraySegments(snapshot *Snapshot, settings *Settings) []TraySegment {
 	}
 }
 
-func multiProviderMetrics(snapshot *Snapshot, display StatusDisplay) []string {
-	segments := multiProviderSegments(snapshot, display)
-	if len(segments) == 0 {
-		return nil
-	}
-	parts := make([]string, 0, len(segments))
-	for _, seg := range segments {
-		parts = append(parts, seg.Text)
-	}
-	return parts
-}
-
 func multiProviderSegments(snapshot *Snapshot, display StatusDisplay) []TraySegment {
 	if snapshot == nil || len(display.SelectedQuotas) == 0 {
 		return nil

@@ -50,11 +50,6 @@ func WithKimiOAuthHost(u string) KimiOption {
 	return func(c *KimiClient) { c.oauthHost = strings.TrimRight(u, "/") }
 }
 
-// WithKimiTimeout sets the HTTP client timeout.
-func WithKimiTimeout(d time.Duration) KimiOption {
-	return func(c *KimiClient) { c.httpClient.Timeout = d }
-}
-
 // WithKimiStaticToken forces a bearer token (skips disk credentials / refresh).
 func WithKimiStaticToken(token string) KimiOption {
 	return func(c *KimiClient) { c.staticToken = strings.TrimSpace(token) }

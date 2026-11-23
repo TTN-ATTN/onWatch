@@ -37,13 +37,6 @@ func WithMoonshotBaseURL(url string) MoonshotOption {
 	}
 }
 
-// WithMoonshotTimeout sets a custom timeout (for testing).
-func WithMoonshotTimeout(timeout time.Duration) MoonshotOption {
-	return func(c *MoonshotClient) {
-		c.httpClient.Timeout = timeout
-	}
-}
-
 // NewMoonshotClient creates a new Moonshot API client.
 func NewMoonshotClient(apiKey string, logger *slog.Logger, opts ...MoonshotOption) *MoonshotClient {
 	if logger == nil {

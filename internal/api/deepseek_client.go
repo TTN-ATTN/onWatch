@@ -37,13 +37,6 @@ func WithDeepSeekBaseURL(url string) DeepSeekOption {
 	}
 }
 
-// WithDeepSeekTimeout sets a custom timeout (for testing).
-func WithDeepSeekTimeout(timeout time.Duration) DeepSeekOption {
-	return func(c *DeepSeekClient) {
-		c.httpClient.Timeout = timeout
-	}
-}
-
 // NewDeepSeekClient creates a new DeepSeek API client.
 func NewDeepSeekClient(apiKey string, logger *slog.Logger, opts ...DeepSeekOption) *DeepSeekClient {
 	if logger == nil {

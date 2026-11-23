@@ -6881,15 +6881,9 @@ func (h *Handler) buildAnthropicCurrentOK() (response map[string]interface{}, re
 	return response, true, true
 }
 
-// buildAnthropicCurrentFallback uses the single latest snapshot when per-quota
-// merge fails. This preserves the original behavior as a safety net.
-func (h *Handler) buildAnthropicCurrentFallback(response map[string]interface{}) map[string]interface{} {
-	response, _, _ = h.buildAnthropicCurrentFallbackOK(response)
-	return response
-}
-
-// buildAnthropicCurrentFallbackOK is buildAnthropicCurrentFallback with an
-// explicit storage outcome.
+// buildAnthropicCurrentFallbackOK uses the single latest snapshot when the
+// per-quota merge fails, and reports the storage outcome. This preserves the
+// original behavior as a safety net.
 func (h *Handler) buildAnthropicCurrentFallbackOK(response map[string]interface{}) (result map[string]interface{}, readOK bool, hasData bool) {
 	latest, err := h.store.QueryLatestAnthropic()
 	if err != nil {

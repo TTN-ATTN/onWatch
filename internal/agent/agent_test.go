@@ -41,44 +41,6 @@ func testResponse() api.QuotaResponse {
 	}
 }
 
-// setupTest creates a mock server, store, and agent for testing
-func setupTest(t *testing.T) (*Agent, *store.Store, *httptest.Server, *bytes.Buffer) {
-	var callCount atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount.Add(1)
-		resp := testResponse()
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	t.Cleanup(server.Close)
-
-	// Create in-memory database
-	dbPath := ":memory:"
-	str, err := store.New(dbPath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	t.Cleanup(func() { str.Close() })
-
-	// Create logger that writes to buffer for testing
-	var buf bytes.Buffer
-	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})
-	logger := slog.New(handler)
-
-	// Create API client pointing to mock server
-	client := api.NewClient("test-key", logger, api.WithBaseURL(server.URL))
-
-	// Create tracker
-	tr := tracker.New(str, logger)
-
-	// Create agent with short interval for testing
-	agent := New(client, str, tr, 100*time.Millisecond, logger, nil)
-
-	return agent, str, server, &buf
-}
-
 // TestAgent_PollsAtInterval verifies the API is called N times in N*interval duration
 func TestAgent_PollsAtInterval(t *testing.T) {
 	t.Parallel()

@@ -63,13 +63,6 @@ func WithCommandCodeTimeout(timeout time.Duration) CommandCodeClientOption {
 	}
 }
 
-// WithCommandCodeHTTPTransport overrides the HTTP transport (for testing).
-func WithCommandCodeHTTPTransport(rt http.RoundTripper) CommandCodeClientOption {
-	return func(c *CommandCodeClient) {
-		c.httpClient.Transport = rt
-	}
-}
-
 func withCommandCodeNow(now func() time.Time) CommandCodeClientOption {
 	return func(c *CommandCodeClient) {
 		c.now = now

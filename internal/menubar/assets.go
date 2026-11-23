@@ -4,7 +4,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"strings"
 )
 
@@ -14,11 +13,6 @@ var frontendFS embed.FS
 // FrontendAsset returns a named frontend asset.
 func FrontendAsset(name string) ([]byte, error) {
 	return frontendFS.ReadFile("frontend/" + name)
-}
-
-// FrontendSubFS exposes the embedded frontend directory.
-func FrontendSubFS() (fs.FS, error) {
-	return fs.Sub(frontendFS, "frontend")
 }
 
 // HTML returns the embedded index document.

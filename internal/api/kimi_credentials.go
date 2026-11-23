@@ -85,17 +85,6 @@ func (c *KimiCredentials) SecondsUntilExpiry() int64 {
 	return d
 }
 
-// usable reports whether credentials can still authenticate (fresh access or refreshable).
-func (c *KimiCredentials) usable() bool {
-	if c == nil {
-		return false
-	}
-	if c.AccessToken != "" && !c.Expired() {
-		return true
-	}
-	return c.RefreshToken != ""
-}
-
 // KimiCredentialsCandidates returns kimi-code credential file paths, in preference order.
 //
 //	$KIMI_CODE_CREDENTIALS          # explicit file

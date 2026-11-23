@@ -27,11 +27,6 @@ func makeMultiQuotaSnapshot(capturedAt time.Time, quotas []api.AnthropicQuota) *
 	}
 }
 
-// timePtr returns a pointer to the given time.
-func timePtr(t time.Time) *time.Time {
-	return &t
-}
-
 func TestAnthropicTracker_Process_FirstSnapshot_CreatesCycle(t *testing.T) {
 	t.Parallel()
 	s, err := store.New(":memory:")

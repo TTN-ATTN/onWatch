@@ -123,10 +123,6 @@ func (b *cursorBadFields) intFieldDefining(raw json.RawMessage, dst *cursorFlexI
 	return false
 }
 
-func (b *cursorBadFields) floatField(raw json.RawMessage, dst *cursorFlexFloat) {
-	b.floatFieldDefining(raw, dst)
-}
-
 func (b *cursorBadFields) floatFieldDefining(raw json.RawMessage, dst *cursorFlexFloat) bool {
 	if len(raw) == 0 {
 		return false
